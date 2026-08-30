@@ -1,0 +1,491 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="description" content="Explore recent USGS earthquake data and create maps with Quake Agent.">
+    <title>Quake Agent</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #07111f;
+        --panel: rgba(12, 27, 45, 0.88);
+        --panel-strong: #10243a;
+        --line: rgba(151, 178, 207, 0.22);
+        --text: #edf5fb;
+        --muted: #9fb3c6;
+        --accent: #67d4c0;
+        --accent-strong: #33bda6;
+        --danger: #ff9d91;
+        --shadow: 0 22px 60px rgba(0, 0, 0, 0.28);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        background:
+          radial-gradient(circle at 12% 4%, rgba(39, 115, 142, 0.34), transparent 31rem),
+          radial-gradient(circle at 88% 88%, rgba(27, 110, 91, 0.22), transparent 28rem),
+          var(--bg);
+        color: var(--text);
+        font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+
+      button, textarea { font: inherit; }
+
+      .shell {
+        width: min(920px, calc(100% - 28px));
+        min-height: 100vh;
+        margin: 0 auto;
+        padding: 26px 0 36px;
+        display: grid;
+        grid-template-rows: auto minmax(360px, 1fr) auto;
+        gap: 16px;
+      }
+
+      header {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 20px;
+      }
+
+      .brand { display: flex; align-items: center; gap: 13px; }
+
+      .mark {
+        width: 42px;
+        height: 42px;
+        display: grid;
+        place-items: center;
+        border: 1px solid rgba(103, 212, 192, 0.44);
+        border-radius: 14px;
+        background: rgba(29, 104, 98, 0.3);
+        box-shadow: inset 0 0 24px rgba(103, 212, 192, 0.08);
+        font-size: 22px;
+      }
+
+      h1 { margin: 0; font-size: 20px; letter-spacing: 0.01em; }
+      .tagline { margin: 2px 0 0; color: var(--muted); font-size: 13px; }
+
+      .secondary {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 8px 13px;
+        color: var(--muted);
+        background: rgba(255, 255, 255, 0.03);
+        cursor: pointer;
+      }
+
+      .secondary:hover { color: var(--text); border-color: rgba(151, 178, 207, 0.44); }
+
+      .conversation {
+        min-height: 0;
+        overflow-y: auto;
+        padding: 22px;
+        border: 1px solid var(--line);
+        border-radius: 22px;
+        background: var(--panel);
+        box-shadow: var(--shadow);
+        backdrop-filter: blur(16px);
+      }
+
+      .welcome { max-width: 650px; margin: 8vh auto 0; text-align: center; }
+      .welcome h2 { margin: 0 0 9px; font-size: clamp(26px, 5vw, 40px); line-height: 1.08; }
+      .welcome p { margin: 0 auto; max-width: 570px; color: var(--muted); line-height: 1.6; }
+
+      .prompts { margin-top: 25px; display: flex; flex-wrap: wrap; justify-content: center; gap: 9px; }
+      .prompt-chip {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 9px 13px;
+        color: #c9dae7;
+        background: rgba(255, 255, 255, 0.035);
+        cursor: pointer;
+      }
+      .prompt-chip:hover { border-color: rgba(103, 212, 192, 0.56); color: var(--text); }
+
+      .message { display: flex; margin: 0 0 18px; }
+      .message.user { justify-content: flex-end; }
+      .bubble {
+        max-width: min(720px, 88%);
+        padding: 13px 15px;
+        border-radius: 17px;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+        line-height: 1.55;
+      }
+      .user .bubble { background: #1f6e68; border-bottom-right-radius: 5px; }
+      .agent .bubble { background: var(--panel-strong); border: 1px solid var(--line); border-bottom-left-radius: 5px; }
+
+      .attachments { width: min(760px, 100%); margin: -7px 0 22px; }
+      .artifact {
+        overflow: hidden;
+        border: 1px solid var(--line);
+        border-radius: 17px;
+        background: #091525;
+      }
+      .artifact img { display: block; width: 100%; height: auto; background: #d7e3e8; }
+      .artifact-meta {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 10px 12px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .artifact-links { display: flex; gap: 12px; }
+      .artifact a { color: var(--accent); text-decoration: none; }
+      .artifact a:hover { text-decoration: underline; }
+      .artifact-error { color: var(--danger); padding: 12px 14px; }
+
+      .thinking { color: var(--muted); font-size: 14px; padding: 0 4px 17px; }
+      .thinking::after { content: ""; animation: dots 1.2s steps(4, end) infinite; }
+      @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75%, 100% { content: "..."; } }
+
+      .composer {
+        padding: 13px;
+        border: 1px solid var(--line);
+        border-radius: 19px;
+        background: rgba(12, 27, 45, 0.94);
+        box-shadow: var(--shadow);
+      }
+      .composer-row { display: flex; align-items: flex-end; gap: 10px; }
+      textarea {
+        flex: 1;
+        min-height: 48px;
+        max-height: 150px;
+        resize: none;
+        border: 0;
+        outline: 0;
+        padding: 12px 10px;
+        color: var(--text);
+        background: transparent;
+        line-height: 1.45;
+      }
+      textarea::placeholder { color: #7790a6; }
+      .send {
+        width: 46px;
+        height: 46px;
+        flex: 0 0 auto;
+        border: 0;
+        border-radius: 14px;
+        color: #041513;
+        background: var(--accent);
+        cursor: pointer;
+        font-weight: 800;
+        font-size: 18px;
+      }
+      .send:hover { background: var(--accent-strong); }
+      .send:disabled, textarea:disabled { opacity: 0.52; cursor: not-allowed; }
+      .fine-print { margin: 8px 4px 0; color: #71869a; font-size: 11px; text-align: center; }
+      .error { color: var(--danger); }
+
+      @media (max-width: 620px) {
+        .shell { width: min(100% - 16px, 920px); padding-top: 13px; gap: 10px; }
+        .tagline { display: none; }
+        .conversation { padding: 15px; border-radius: 17px; }
+        .welcome { margin-top: 4vh; }
+        .bubble { max-width: 94%; }
+        .artifact-meta { align-items: flex-start; flex-direction: column; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <header>
+        <div class="brand">
+          <div class="mark" aria-hidden="true">⌁</div>
+          <div>
+            <h1>Quake Agent</h1>
+            <p class="tagline">Explore current USGS earthquake data and build maps</p>
+          </div>
+        </div>
+        <button id="new-conversation" class="secondary" type="button">New conversation</button>
+      </header>
+
+      <section id="conversation" class="conversation" aria-live="polite">
+        <div id="welcome" class="welcome">
+          <h2>See recent earthquakes in context.</h2>
+          <p>Ask about the official hourly or monthly USGS feed. Quake Agent can filter events, compare observations, and draw versioned maps.</p>
+          <div class="prompts">
+            <button class="prompt-chip" type="button">Map hourly earthquakes of magnitude 2 or greater</button>
+            <button class="prompt-chip" type="button">Show the ten largest events in the monthly feed</button>
+            <button class="prompt-chip" type="button">Map recent earthquakes around the Pacific</button>
+          </div>
+        </div>
+      </section>
+
+      <form id="composer" class="composer">
+        <div class="composer-row">
+          <textarea id="prompt" rows="1" placeholder="Ask about recent earthquakes…" aria-label="Message Quake Agent" required></textarea>
+          <button id="send" class="send" type="submit" aria-label="Send message">↑</button>
+        </div>
+        <p class="fine-print">Temporary public demo. Do not submit sensitive data. Observations are not earthquake predictions or hazard advice.</p>
+      </form>
+    </main>
+
+    <script>
+      (() => {
+        "use strict";
+
+        const conversation = document.querySelector("#conversation");
+        const welcome = document.querySelector("#welcome");
+        const form = document.querySelector("#composer");
+        const prompt = document.querySelector("#prompt");
+        const send = document.querySelector("#send");
+        const newConversation = document.querySelector("#new-conversation");
+        const renderedArtifacts = new Set();
+        let config = null;
+        let busy = false;
+
+        const sessionKey = "quake-agent-session-id";
+        const userKey = "quake-agent-user-id";
+
+        function storedUuid(key) {
+          let value = sessionStorage.getItem(key);
+          if (!value) {
+            value = crypto.randomUUID();
+            sessionStorage.setItem(key, value);
+          }
+          return value;
+        }
+
+        function apiUrl(path) {
+          const base = (config.apiBaseUrl || window.location.origin).replace(/\/$/, "");
+          return `${base}${path}`;
+        }
+
+        function scrollToBottom() {
+          conversation.scrollTop = conversation.scrollHeight;
+        }
+
+        function addMessage(role, text, extraClass = "") {
+          welcome?.remove();
+          const row = document.createElement("div");
+          row.className = `message ${role}`;
+          const bubble = document.createElement("div");
+          bubble.className = `bubble ${extraClass}`.trim();
+          bubble.textContent = text;
+          row.appendChild(bubble);
+          conversation.appendChild(row);
+          scrollToBottom();
+          return row;
+        }
+
+        function setBusy(value) {
+          busy = value;
+          prompt.disabled = value;
+          send.disabled = value;
+          newConversation.disabled = value;
+        }
+
+        function addThinking() {
+          const node = document.createElement("div");
+          node.className = "thinking";
+          node.textContent = "Analyzing USGS data";
+          conversation.appendChild(node);
+          scrollToBottom();
+          return node;
+        }
+
+        function responseText(events) {
+          const chunks = [];
+          for (const event of events) {
+            if (event.author !== "seismic_analyst" || !event.content?.parts) continue;
+            for (const part of event.content.parts) {
+              if (typeof part.text === "string" && part.text.trim() && !part.thought) {
+                chunks.push(part.text.trim());
+              }
+            }
+          }
+          return chunks.join("\n\n");
+        }
+
+        function artifactDeltas(events) {
+          const artifacts = [];
+          for (const event of events) {
+            const delta = event.actions?.artifactDelta;
+            if (!delta || typeof delta !== "object") continue;
+            for (const [name, version] of Object.entries(delta)) {
+              if (name.toLowerCase().endsWith(".png") && Number.isInteger(version)) {
+                artifacts.push({ name, version });
+              }
+            }
+          }
+          return artifacts;
+        }
+
+        async function errorDetail(response) {
+          try {
+            const data = await response.json();
+            return typeof data.detail === "string" ? data.detail : `Request failed (${response.status}).`;
+          } catch (_) {
+            return `Request failed (${response.status}).`;
+          }
+        }
+
+        function inlineImageSource(inline) {
+          const standardBase64 = inline.data.replace(/-/g, "+").replace(/_/g, "/");
+          const padding = "=".repeat((4 - (standardBase64.length % 4)) % 4);
+          return `data:${inline.mimeType};base64,${standardBase64}${padding}`;
+        }
+
+        async function renderArtifact(userId, sessionId, artifact) {
+          const key = `${sessionId}:${artifact.name}:${artifact.version}`;
+          if (renderedArtifacts.has(key)) return;
+          renderedArtifacts.add(key);
+
+          const attachments = document.createElement("div");
+          attachments.className = "attachments";
+          conversation.appendChild(attachments);
+          const card = document.createElement("figure");
+          card.className = "artifact";
+          attachments.appendChild(card);
+
+          try {
+            const encodedName = artifact.name.split("/").map(encodeURIComponent).join("/");
+            const path = `/apps/${encodeURIComponent(config.appName)}/users/${encodeURIComponent(userId)}`
+              + `/sessions/${encodeURIComponent(sessionId)}/artifacts/${encodedName}/versions/${artifact.version}`;
+            const response = await fetch(apiUrl(path), { headers: { "Accept": "application/json" } });
+            if (!response.ok) throw new Error(await errorDetail(response));
+            const part = await response.json();
+            const inline = part?.inlineData;
+            if (!inline || inline.mimeType !== "image/png" || typeof inline.data !== "string") {
+              throw new Error("The map artifact did not contain inline PNG data.");
+            }
+
+            const source = inlineImageSource(inline);
+            const image = document.createElement("img");
+            image.alt = `Generated earthquake map: ${artifact.name}`;
+            image.decoding = "async";
+            const imageLoaded = new Promise((resolve, reject) => {
+              image.addEventListener("load", resolve, { once: true });
+              image.addEventListener(
+                "error",
+                () => reject(new Error("The map image could not be decoded.")),
+                { once: true }
+              );
+            });
+            image.src = source;
+            await imageLoaded;
+            card.appendChild(image);
+
+            const meta = document.createElement("figcaption");
+            meta.className = "artifact-meta";
+            const label = document.createElement("span");
+            label.textContent = `${artifact.name} · version ${artifact.version}`;
+            const links = document.createElement("span");
+            links.className = "artifact-links";
+            const open = document.createElement("a");
+            open.href = source;
+            open.target = "_blank";
+            open.rel = "noopener";
+            open.textContent = "Full size";
+            const download = document.createElement("a");
+            download.href = source;
+            download.download = artifact.name.split("/").pop() || "earthquake-map.png";
+            download.textContent = "Download";
+            links.append(open, download);
+            meta.append(label, links);
+            card.appendChild(meta);
+          } catch (error) {
+            card.classList.add("artifact-error");
+            card.textContent = `Map unavailable: ${error instanceof Error ? error.message : "unknown error"}`;
+          }
+          scrollToBottom();
+        }
+
+        async function submitPrompt(text) {
+          const cleanText = text.trim();
+          if (!cleanText || busy || !config) return;
+          if (cleanText.length > config.maxPromptCharacters) {
+            addMessage("agent", `Messages are limited to ${config.maxPromptCharacters.toLocaleString()} characters.`, "error");
+            return;
+          }
+
+          const userId = storedUuid(userKey);
+          const sessionId = storedUuid(sessionKey);
+          addMessage("user", cleanText);
+          prompt.value = "";
+          prompt.style.height = "auto";
+          setBusy(true);
+          const thinking = addThinking();
+
+          try {
+            const response = await fetch(apiUrl("/run"), {
+              method: "POST",
+              headers: { "Accept": "application/json", "Content-Type": "application/json" },
+              body: JSON.stringify({
+                appName: config.appName,
+                userId,
+                sessionId,
+                newMessage: { role: "user", parts: [{ text: cleanText }] },
+                streaming: false
+              })
+            });
+            if (!response.ok) throw new Error(await errorDetail(response));
+            const events = await response.json();
+            if (!Array.isArray(events)) throw new Error("The agent returned an unexpected response.");
+            thinking.remove();
+            const text = responseText(events);
+            addMessage("agent", text || "The agent completed the request without a text response.");
+            for (const artifact of artifactDeltas(events)) {
+              await renderArtifact(userId, sessionId, artifact);
+            }
+          } catch (error) {
+            thinking.remove();
+            addMessage("agent", error instanceof Error ? error.message : "The request failed.", "error");
+          } finally {
+            setBusy(false);
+            prompt.focus();
+          }
+        }
+
+        form.addEventListener("submit", (event) => {
+          event.preventDefault();
+          submitPrompt(prompt.value);
+        });
+
+        prompt.addEventListener("keydown", (event) => {
+          if (event.key === "Enter" && !event.shiftKey) {
+            event.preventDefault();
+            form.requestSubmit();
+          }
+        });
+
+        prompt.addEventListener("input", () => {
+          prompt.style.height = "auto";
+          prompt.style.height = `${Math.min(prompt.scrollHeight, 150)}px`;
+        });
+
+        document.querySelectorAll(".prompt-chip").forEach((button) => {
+          button.addEventListener("click", () => submitPrompt(button.textContent));
+        });
+
+        newConversation.addEventListener("click", () => {
+          sessionStorage.setItem(sessionKey, crypto.randomUUID());
+          renderedArtifacts.clear();
+          window.location.reload();
+        });
+
+        fetch("/runtime-config.json", { cache: "no-store" })
+          .then((response) => {
+            if (!response.ok) throw new Error("Runtime configuration is unavailable.");
+            return response.json();
+          })
+          .then((value) => {
+            config = value;
+            prompt.maxLength = config.maxPromptCharacters;
+            prompt.focus();
+          })
+          .catch((error) => {
+            addMessage("agent", error.message, "error");
+            setBusy(true);
+          });
+      })();
+    </script>
+  </body>
+</html>
