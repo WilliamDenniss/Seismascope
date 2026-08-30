@@ -1,0 +1,82 @@
+{
+  "type": "FeatureCollection",
+  "metadata": {
+    "generated": 1788019200000,
+    "url": "https://earthquake.usgs.gov/example",
+    "title": "USGS sample",
+    "status": 200,
+    "api": "1.14.1",
+    "count": 7
+  },
+  "bbox": [-179.7, -10.0, 5.0, 179.5, 45.0, 650.0],
+  "features": [
+    {
+      "type": "Feature",
+      "id": "event-1",
+      "properties": {
+        "mag": 4.5,
+        "place": "Northern California",
+        "time": 1788015600000,
+        "sig": 312,
+        "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/event-1.geojson"
+      },
+      "geometry": {"type": "Point", "coordinates": [-122.3, 37.8, 10.0]}
+    },
+    {
+      "type": "Feature",
+      "id": "event-2",
+      "properties": {
+        "mag": 5.2,
+        "place": "West of the antimeridian",
+        "time": 1788017400000,
+        "sig": 420,
+        "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/event-2.geojson"
+      },
+      "geometry": {"type": "Point", "coordinates": [179.5, 10.0, 30.0]}
+    },
+    {
+      "type": "Feature",
+      "id": "event-3",
+      "properties": {
+        "mag": 3.1,
+        "place": "East of the antimeridian",
+        "time": 1788016500000,
+        "sig": 180,
+        "detail": "https://earthquake.usgs.gov/earthquakes/feed/v1.0/detail/event-3.geojson"
+      },
+      "geometry": {"type": "Point", "coordinates": [-179.7, 11.0, 20.0]}
+    },
+    {
+      "type": "Feature",
+      "id": "event-4",
+      "properties": {
+        "mag": null,
+        "place": null,
+        "time": 1788018300000,
+        "sig": null,
+        "detail": null
+      },
+      "geometry": {"type": "Point", "coordinates": [10.0, -10.0, 650.0]}
+    },
+    {
+      "type": "Feature",
+      "id": "event-1",
+      "properties": {
+        "mag": 4.0,
+        "place": "Older duplicate",
+        "time": 1788010000000,
+        "sig": 250,
+        "detail": null
+      },
+      "geometry": {"type": "Point", "coordinates": [-122.0, 38.0, 8.0]}
+    },
+    {
+      "type": "Feature",
+      "id": "invalid-coordinate",
+      "properties": {"mag": 6.0, "time": 1788018500000},
+      "geometry": {"type": "Point", "coordinates": [300.0, 95.0, 2.0]}
+    },
+    "not-a-feature"
+  ]
+}
+
