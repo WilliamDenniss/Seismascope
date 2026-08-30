@@ -102,7 +102,11 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert "artifactDelta" in page.text
     assert "inlineData" in page.text
     assert 'replace(/-/g, "+").replace(/_/g, "/")' in page.text
-    assert "Full size" in page.text
+    assert "renderMarkdown" in page.text
+    assert 'class="image-viewer"' in page.text
+    assert "showModal()" in page.text
+    assert 'event.key === "Escape"' in page.text
+    assert "Full size" not in page.text
     assert "Download" in page.text
     assert page.headers["cache-control"] == "no-store"
     assert config.json() == {
