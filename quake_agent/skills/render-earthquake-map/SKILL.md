@@ -13,9 +13,17 @@ This skill draws events; it does not decide which earthquakes are relevant.
 
 - For a new map, call `render_events_on_world_map` with objects containing
   `coord`, `label`, `latitude_radius`, and `color`.
-- When the user wants a regional or tightly framed result, set
-  `crop_to_drawn_area=true`. Use `crop_padding_px` to retain geographic context;
-  otherwise keep the full-world default.
+- Infer framing from the requested geographic scope. When a map request names a
+  subglobal region—such as the Pacific, Ring of Fire, Alaska, California, Japan,
+  or the Mediterranean—set `crop_to_drawn_area=true` unless the user explicitly
+  requests a full-world view or worldwide comparison. Do not ask for
+  confirmation.
+- Use enough `crop_padding_px` to preserve geographic context: approximately 96
+  pixels for broad regions and 48 pixels for smaller regions. Pacific and other
+  antimeridian-crossing regions should still be cropped; the renderer handles
+  antimeridian stitching.
+- Keep the full-world default for global requests or when the selected events
+  intentionally span most of the world.
 - Coordinates are always `[longitude, latitude]`.
 - `latitude_radius` is a positive angular latitude span in degrees. It controls
   visual marker size and is not a geodesic distance or hazard radius.
