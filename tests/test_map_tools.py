@@ -113,6 +113,79 @@ async def test_state_and_artifacts_survive_new_file_service_instance(tmp_path: P
     assert loaded["spec"]["events"][0]["label"] == "Equator"
 
 
+async def test_crop_to_drawn_area_records_dimensions_bounds_and_padding(
+    artifact_context,
+) -> None:
+    rendered = await render_events_on_world_map(
+        [
+            MapEvent(
+                coord=[0, 0],
+                label="",
+                latitude_radius=2,
+                color="#00aa00",
+            )
+        ],
+        crop_to_drawn_area=True,
+        crop_padding_px=12,
+        tool_context=artifact_context,
+    )
+
+    assert rendered["status"] == "ok"
+    assert rendered["crop"]["requested"] is True
+    assert rendered["crop"]["applied"] is True
+    assert rendered["crop"]["padding_px"] == 12
+    assert rendered["width"] < 100
+    assert rendered["height"] < 100
+    assert rendered["bounds"]["west"] < 0 < rendered["bounds"]["east"]
+    assert rendered["bounds"]["south"] < 0 < rendered["bounds"]["north"]
+
+    map_part = await artifact_context.load_artifact("earthquake-map.png", version=0)
+    assert map_part.inline_data is not None
+    with Image.open(BytesIO(bytes(map_part.inline_data.data))) as image:
+        assert image.size == (rendered["width"], rendered["height"])
+
+    loaded = await load_current_map_spec(tool_context=artifact_context)
+    assert loaded["spec"]["source"]["width"] == 2048
+    assert loaded["spec"]["source"]["height"] == 2048
+    assert loaded["spec"]["crop"] == rendered["crop"]
+
+
+async def test_crop_stitches_antimeridian_into_compact_output(artifact_context) -> None:
+    rendered = await render_events_on_world_map(
+        [
+            MapEvent(
+                coord=[179.5, 0],
+                label="",
+                latitude_radius=4,
+                color="royalblue",
+            )
+        ],
+        crop_to_drawn_area=True,
+        crop_padding_px=8,
+        tool_context=artifact_context,
+    )
+
+    assert rendered["status"] == "ok"
+    assert rendered["width"] < 150
+    assert rendered["crop"]["wraps_antimeridian"] is True
+    assert rendered["bounds"]["west"] > rendered["bounds"]["east"]
+
+
+async def test_crop_with_no_drawable_content_keeps_full_map(artifact_context) -> None:
+    rendered = await render_events_on_world_map(
+        [],
+        crop_to_drawn_area=True,
+        tool_context=artifact_context,
+    )
+
+    assert rendered["status"] == "ok"
+    assert rendered["width"] == 2048
+    assert rendered["height"] == 2048
+    assert rendered["crop"]["requested"] is True
+    assert rendered["crop"]["applied"] is False
+    assert any("no drawable content" in warning for warning in rendered["warnings"])
+
+
 async def test_renderer_clamps_latitude_and_rejects_unsafe_artifact_name(
     artifact_context,
 ) -> None:

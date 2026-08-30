@@ -21,6 +21,7 @@ Example prompts:
 - Download the hourly feed and map earthquakes of magnitude 2 or greater.
 - Use the monthly feed and show the ten largest events.
 - Keep the same circles, make the deepest events blue, and remove other labels.
+- Crop the current map to the area containing the circles, with 48 pixels of padding.
 - Refresh the hourly data and tell me whether any mapped events changed.
 
 ## Test

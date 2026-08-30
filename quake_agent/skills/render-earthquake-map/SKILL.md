@@ -13,6 +13,9 @@ This skill draws events; it does not decide which earthquakes are relevant.
 
 - For a new map, call `render_events_on_world_map` with objects containing
   `coord`, `label`, `latitude_radius`, and `color`.
+- When the user wants a regional or tightly framed result, set
+  `crop_to_drawn_area=true`. Use `crop_padding_px` to retain geographic context;
+  otherwise keep the full-world default.
 - Coordinates are always `[longitude, latitude]`.
 - `latitude_radius` is a positive angular latitude span in degrees. It controls
   visual marker size and is not a geodesic distance or hazard radius.
@@ -20,10 +23,10 @@ This skill draws events; it does not decide which earthquakes are relevant.
   magnitude-to-radius rule unless the user asks for one; if you choose a visual
   encoding, explain it.
 - For a follow-up modification, call `load_current_map_spec`, edit its event
-  array, and pass the complete revised array back to the renderer.
+  array, and pass the complete revised array back to the renderer. Preserve the
+  saved crop request and padding unless the user asks to change the framing.
 - Report both the PNG artifact and its source-specification artifact, including
   their versions and any renderer warnings.
 
 Read [references/map-contract.md](references/map-contract.md) only when you need
 projection, color, wrapping, or label-placement details.
-
