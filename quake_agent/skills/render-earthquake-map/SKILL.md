@@ -22,6 +22,10 @@ This skill draws events; it does not decide which earthquakes are relevant.
   pixels for broad regions and 48 pixels for smaller regions. Pacific and other
   antimeridian-crossing regions should still be cropped; the renderer handles
   antimeridian stitching.
+- For a crop occupying less than `high_resolution_crop_threshold_percent` of
+  the global map's pixel area, use `static/world_map_4x.png`. The renderer makes
+  this selection automatically and defaults the threshold to 6.25%. Preserve
+  the saved threshold on follow-up revisions unless the user asks to change it.
 - Keep the full-world default for global requests or when the selected events
   intentionally span most of the world.
 - Coordinates are always `[longitude, latitude]`.
