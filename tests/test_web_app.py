@@ -24,7 +24,7 @@ def _run_payload(*, text: str = "Map recent earthquakes") -> dict[str, Any]:
 
 @pytest.fixture
 def app_factory(monkeypatch) -> Callable[..., FastAPI]:
-    def build(**environment: str) -> FastAPI:
+    def build(*, fail_run: bool = False, **environment: str) -> FastAPI:
         for name in (
             "QUAKE_AGENT_API_BASE_URL",
             "QUAKE_AGENT_ALLOWED_ORIGINS",
@@ -44,6 +44,8 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
 
             @app.post("/run")
             async def run(request: Request) -> list[dict[str, Any]]:
+                if fail_run:
+                    raise RuntimeError("private test failure")
                 payload = await request.json()
                 return [
                     {
@@ -108,6 +110,10 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert "Quake Agent" in page.text
     assert "artifactDelta" in page.text
     assert "inlineData" in page.text
+    assert "event.errorMessage" in page.text
+    assert "event.finishReason" in page.text
+    assert "HTTP ${response.status}" in page.text
+    assert "no text or diagnostic details" in page.text
     assert 'replace(/-/g, "+").replace(/_/g, "/")' in page.text
     assert "renderMarkdown" in page.text
     assert 'link.target = "_blank"' in page.text
@@ -139,6 +145,19 @@ async def test_valid_run_body_reaches_adk_with_body_intact(app_factory) -> None:
         "parts"
     ][0]["text"]
     assert event["actions"]["artifactDelta"] == {"earthquake-map.png": 0}
+    assert response.headers["x-content-type-options"] == "nosniff"
+
+
+async def test_unhandled_run_error_returns_safe_json_500(app_factory) -> None:
+    app = app_factory(fail_run=True)
+    async with _client(app) as client:
+        response = await client.post("/run", json=_run_payload())
+
+    assert response.status_code == 500
+    detail = response.json()["detail"]
+    assert detail.startswith("The server could not complete this request.")
+    assert "Error reference:" in detail
+    assert "private test failure" not in detail
     assert response.headers["x-content-type-options"] == "nosniff"
 
 

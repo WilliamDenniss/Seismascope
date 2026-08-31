@@ -6,6 +6,7 @@ import asyncio
 from collections import defaultdict
 from collections import deque
 import json
+import logging
 import os
 from pathlib import Path
 from pathlib import PurePosixPath
@@ -14,6 +15,7 @@ import time
 from typing import Any
 from urllib.parse import urlparse
 from uuid import UUID
+from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi import Request
@@ -23,6 +25,8 @@ from dotenv import load_dotenv
 from google.adk.cli.fast_api import get_fast_api_app
 import uvicorn
 
+
+logger = logging.getLogger(__name__)
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 load_dotenv(REPO_ROOT / ".env")
@@ -287,6 +291,23 @@ def create_app() -> FastAPI:
 
         try:
             response = await call_next(request)
+        except Exception:
+            error_id = uuid4().hex[:12]
+            logger.exception(
+                "Unhandled public request error %s for %s %s",
+                error_id,
+                method,
+                path,
+            )
+            response = JSONResponse(
+                {
+                    "detail": (
+                        "The server could not complete this request. "
+                        f"Error reference: {error_id}."
+                    )
+                },
+                status_code=500,
+            )
         finally:
             if session_id is not None:
                 await active_sessions.release(session_id)

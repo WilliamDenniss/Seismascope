@@ -608,6 +608,52 @@
           return chunks.join("\n\n");
         }
 
+        function displayReason(value) {
+          return String(value)
+            .replace(/^(?:FINISH_REASON_|TURN_COMPLETE_REASON_)/, "")
+            .toLowerCase()
+            .replace(/_/g, " ");
+        }
+
+        function responseError(events) {
+          for (const event of events) {
+            const code = typeof event.errorCode === "string" ? event.errorCode.trim() : "";
+            const message = typeof event.errorMessage === "string" ? event.errorMessage.trim() : "";
+            if (code || message) {
+              const label = code ? `Agent error ${code}` : "Agent error";
+              return message ? `${label}: ${message}` : `${label}.`;
+            }
+          }
+
+          for (const event of events) {
+            for (const part of event.content?.parts || []) {
+              const error = part.functionResponse?.response?.error;
+              if (typeof error === "string" && error.trim()) {
+                return `Tool error: ${error.trim()}`;
+              }
+              if (error && typeof error === "object") {
+                const detail = error.message || error.detail || error.code;
+                if (typeof detail === "string" && detail.trim()) {
+                  return `Tool error: ${detail.trim()}`;
+                }
+              }
+            }
+          }
+
+          for (const event of events) {
+            if (event.interrupted) return "The agent was interrupted before it could finish.";
+            const turnReason = event.turnCompleteReason;
+            if (turnReason && turnReason !== "TURN_COMPLETE_REASON_UNSPECIFIED") {
+              return `The agent stopped without a response (${displayReason(turnReason)}).`;
+            }
+            const finishReason = event.finishReason;
+            if (finishReason && !["STOP", "FINISH_REASON_UNSPECIFIED"].includes(finishReason)) {
+              return `The model stopped without a response (${displayReason(finishReason)}).`;
+            }
+          }
+          return "";
+        }
+
         function artifactDeltas(events) {
           const artifacts = [];
           for (const event of events) {
@@ -623,11 +669,25 @@
         }
 
         async function errorDetail(response) {
+          const statusText = response.statusText?.trim();
+          const status = `HTTP ${response.status}${statusText ? ` ${statusText}` : ""}`;
           try {
-            const data = await response.json();
-            return typeof data.detail === "string" ? data.detail : `Request failed (${response.status}).`;
+            const body = await response.text();
+            if (!body.trim()) return `${status}: The server returned an empty error response.`;
+            try {
+              const data = JSON.parse(body);
+              if (typeof data.detail === "string" && data.detail.trim()) {
+                return `${status}: ${data.detail.trim()}`;
+              }
+              if (typeof data.error?.message === "string" && data.error.message.trim()) {
+                return `${status}: ${data.error.message.trim()}`;
+              }
+            } catch (_) {
+              return `${status}: ${body.trim().slice(0, 500)}`;
+            }
+            return `${status}: The server returned an error.`;
           } catch (_) {
-            return `Request failed (${response.status}).`;
+            return `${status}: The error response could not be read.`;
           }
         }
 
@@ -746,7 +806,15 @@
             if (!Array.isArray(events)) throw new Error("The agent returned an unexpected response.");
             thinking.remove();
             const text = responseText(events);
-            addMessage("agent", text || "The agent completed the request without a text response.");
+            if (text) {
+              addMessage("agent", text);
+            } else {
+              addMessage(
+                "agent",
+                responseError(events) || "The agent returned HTTP 200 but no text or diagnostic details.",
+                "error"
+              );
+            }
             for (const artifact of artifactDeltas(events)) {
               await renderArtifact(userId, sessionId, artifact);
             }
