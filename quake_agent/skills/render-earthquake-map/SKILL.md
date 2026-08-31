@@ -18,17 +18,16 @@ This skill draws events; it does not decide which earthquakes are relevant.
   or create map artifacts. Report the zero-result finding and catalog
   provenance instead. Render an empty base map only when the user explicitly
   requests one.
-- Infer framing from the requested geographic scope. When a map request names a
-  subglobal region—such as the Pacific, Ring of Fire, Alaska, California, Japan,
-  or the Mediterranean—set `crop_to_drawn_area=true` unless the user explicitly
-  requests a full-world view or worldwide comparison. Do not ask for
-  confirmation.
+- Prefer a cropped presentation for every non-empty new map: set
+  `crop_to_drawn_area=true` unless the user explicitly requests a full-world or
+  uncropped view. Treat cropping as opt-out and do not ask for confirmation.
+  A global or worldwide request, a comparison, or events spanning most of the
+  world does not by itself request full-world framing; let the renderer produce
+  a broad or nearly full-world crop when that is what the drawn content needs.
 - Use enough `crop_padding_px` to preserve geographic context: approximately 96
   pixels for broad regions and 48 pixels for smaller regions. Pacific and other
   antimeridian-crossing regions should still be cropped; the renderer handles
   antimeridian stitching.
-- Keep the full-world default for global requests or when the selected events
-  intentionally span most of the world.
 - Coordinates are always `[longitude, latitude]`.
 - `latitude_radius` is a positive angular latitude span in degrees. It controls
   visual marker size and is not a geodesic distance or hazard radius.
