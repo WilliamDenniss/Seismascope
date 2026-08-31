@@ -108,6 +108,7 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert 'event.key === "Escape"' in page.text
     assert "Full size" not in page.text
     assert "Download" in page.text
+    assert page.text.count('class="prompt-chip"') == 6
     assert page.headers["cache-control"] == "no-store"
     assert config.json() == {
         "apiBaseUrl": "https://api.example.test/adk",
