@@ -173,6 +173,42 @@ async def test_render_saves_versioned_png_and_spec_without_mutating_source(
     assert len(historical["spec"]["events"]) == 2
 
 
+async def test_render_draws_larger_circles_after_smaller_circles(
+    artifact_context,
+    monkeypatch,
+) -> None:
+    radii: list[float] = []
+    wrapped_circle_centers = map_tools._wrapped_circle_centers
+
+    def record_draw_order(x: float, radius: float, width: int) -> list[float]:
+        radii.append(radius)
+        return wrapped_circle_centers(x, radius, width)
+
+    monkeypatch.setattr(map_tools, "_wrapped_circle_centers", record_draw_order)
+
+    rendered = await render_events_on_world_map(
+        [
+            MapEvent(
+                coord=[0, 0],
+                label="Large",
+                latitude_radius=4,
+                color="red",
+            ),
+            MapEvent(
+                coord=[10, 0],
+                label="Small",
+                latitude_radius=1,
+                color="blue",
+            ),
+        ],
+        tool_context=artifact_context,
+    )
+
+    assert rendered["status"] == "ok"
+    assert len(radii) == 2
+    assert radii[0] < radii[1]
+
+
 @pytest.mark.parametrize("title", ["Magnitude", None])
 async def test_render_persists_titled_and_untitled_legends_without_changing_viewport(
     artifact_context,

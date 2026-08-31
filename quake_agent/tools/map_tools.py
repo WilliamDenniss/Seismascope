@@ -761,7 +761,7 @@ def _render_map(
             }
         )
 
-    prepared.sort(key=lambda item: (-item["radius_px"], item["index"]))
+    prepared.sort(key=lambda item: (item["radius_px"], item["index"]))
     outline_width = max(2, round(width / 1024))
     for item in prepared:
         for center_x in _wrapped_circle_centers(item["x"], item["radius_px"], width):

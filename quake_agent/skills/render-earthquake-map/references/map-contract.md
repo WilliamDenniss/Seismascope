@@ -18,8 +18,9 @@ Each event has this shape:
 ```
 
 Colors may be Pillow-compatible names, hex values, or RGBA values. Circles are
-translucent with opaque outlines. Larger circles are drawn first, circles wrap
-across the antimeridian, and labels use deterministic collision-aware placement.
+translucent with opaque outlines. Smaller circles are drawn first so larger
+circles appear on top; circles wrap across the antimeridian, and labels use
+deterministic collision-aware placement.
 
 When colors communicate categories or ranges, the agent can supply an explicit
 legend alongside the events:
