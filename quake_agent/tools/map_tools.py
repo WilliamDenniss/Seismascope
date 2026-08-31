@@ -591,7 +591,6 @@ def _render_legend(
     rendered: Image.Image,
     content_overlay: Image.Image,
     prepared_legend: dict[str, Any] | None,
-    source_scale: int,
     reserve_bottom_attribution: bool,
 ) -> tuple[Image.Image, dict[str, Any] | None]:
     if prepared_legend is None:
@@ -599,17 +598,17 @@ def _render_legend(
 
     width, height = rendered.size
     font_size = max(
-        10 * source_scale,
+        10,
         round(min(width, height) * 0.018),
     )
     font = _load_legend_font(font_size)
     measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
-    padding = max(4 * source_scale, round(font_size * 0.5))
-    margin = max(4 * source_scale, round(font_size * 0.5))
+    padding = max(4, round(font_size * 0.5))
+    margin = max(4, round(font_size * 0.5))
     swatch_size = font_size
-    column_gap = max(3 * source_scale, round(font_size * 0.4))
-    row_gap = max(2 * source_scale, round(font_size * 0.25))
-    section_gap = max(3 * source_scale, round(font_size * 0.4))
+    column_gap = max(3, round(font_size * 0.4))
+    row_gap = max(2, round(font_size * 0.25))
+    section_gap = max(3, round(font_size * 0.4))
 
     title = prepared_legend["title"]
     display_title = _legend_display_text(title) if title is not None else None
@@ -657,7 +656,7 @@ def _render_legend(
         )
 
     bottom_clearance = (
-        max(24 * source_scale, round(font_size * 1.25))
+        max(24, round(font_size * 1.25))
         if reserve_bottom_attribution
         else 0
     )
@@ -670,7 +669,7 @@ def _render_legend(
     legend_overlay = Image.new("RGBA", rendered.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(legend_overlay, "RGBA")
     border_width = max(1, round(font_size / 10))
-    radius = max(4 * source_scale, round(font_size * 0.4))
+    radius = max(4, round(font_size * 0.4))
     draw_panel_box = (
         panel_box[0],
         panel_box[1],
@@ -917,7 +916,6 @@ def _render_map(
         rendered,
         content_overlay,
         prepared_legend,
-        source_scale,
         _crop_contains_source_bottom_right(crop, source_size),
     )
 

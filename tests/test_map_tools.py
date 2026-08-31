@@ -13,6 +13,7 @@ from PIL import ImageDraw
 import pytest
 
 import quake_agent.tools.map_tools as map_tools
+from quake_agent.tools.map_tools import DENSE_MAP_MAGNITUDE_LEGEND
 from quake_agent.tools.map_tools import MAP_SOURCES
 from quake_agent.tools.map_tools import MINIMUM_CROP_LONG_EDGE_PX
 from quake_agent.tools.map_tools import MapEvent
@@ -483,7 +484,18 @@ async def test_crop_stitches_antimeridian_into_compact_output(artifact_context) 
     assert rendered["bounds"]["west"] > rendered["bounds"]["east"]
 
 
-async def test_legend_does_not_change_scaled_antimeridian_crop(artifact_context) -> None:
+async def test_legend_does_not_change_scaled_antimeridian_crop(
+    artifact_context,
+    monkeypatch,
+) -> None:
+    font_sizes: list[int] = []
+    load_legend_font = map_tools._load_legend_font
+
+    def track_legend_font_size(size: int):
+        font_sizes.append(size)
+        return load_legend_font(size)
+
+    monkeypatch.setattr(map_tools, "_load_legend_font", track_legend_font_size)
     events = [
         MapEvent(
             coord=[179.5, 0],
@@ -504,12 +516,7 @@ async def test_legend_does_not_change_scaled_antimeridian_crop(artifact_context)
         artifact_name="legend-crop.png",
         crop_to_drawn_area=True,
         crop_padding_px=8,
-        legend=MapLegend(
-            items=[
-                MapLegendItem(label="Low", color="royalblue"),
-                MapLegendItem(label="High", color="#dc2626"),
-            ]
-        ),
+        legend=DENSE_MAP_MAGNITUDE_LEGEND,
         tool_context=artifact_context,
     )
 
@@ -521,6 +528,7 @@ async def test_legend_does_not_change_scaled_antimeridian_crop(artifact_context)
     assert with_legend["crop"] == plain["crop"]
     assert with_legend["crop"]["wraps_antimeridian"] is True
     assert with_legend["legend"] is not None
+    assert font_sizes == [10]
 
 
 async def test_crop_uses_two_x_map_when_it_reaches_minimum_long_edge(
