@@ -34,6 +34,15 @@ def test_agent_loads_both_filesystem_skills_and_public_tool_schemas() -> None:
         assert tool._get_declaration() is not None
 
 
+def test_agent_requires_google_maps_links_for_displayed_coordinates() -> None:
+    assert isinstance(root_agent.instruction, str)
+    assert (
+        "make the displayed coordinate text a Markdown link" in root_agent.instruction
+    )
+    assert "google_maps_url" in root_agent.instruction
+    assert "@<latitude>,<longitude>,6z/" in root_agent.instruction
+
+
 async def test_activated_skills_expose_only_their_dynamic_tools() -> None:
     data_context = SimpleNamespace(
         agent_name="seismic_analyst",

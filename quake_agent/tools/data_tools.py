@@ -358,6 +358,11 @@ def _in_bounds(lon: float, lat: float, bounds: GeoBounds | None) -> bool:
     return lon >= bounds.west or lon <= bounds.east
 
 
+def _google_maps_url(lon: float, lat: float) -> str:
+    coordinate = f"{lat},{lon}"
+    return f"https://www.google.com/maps/place/{coordinate}/@{coordinate},6z/"
+
+
 def _normalize_event(feature: dict[str, Any]) -> dict[str, Any] | None:
     coords = _coord_from_feature(feature)
     if coords is None:
@@ -388,6 +393,7 @@ def _normalize_event(feature: dict[str, Any]) -> dict[str, Any] | None:
     return {
         "id": event_id,
         "coord": [lon, lat],
+        "google_maps_url": _google_maps_url(lon, lat),
         "depth_km": depth,
         "magnitude": float(magnitude) if magnitude is not None else None,
         "place": place,
@@ -541,4 +547,3 @@ async def query_usgs_feed(
         "deduplicated_count": duplicates,
         "events": returned,
     }
-

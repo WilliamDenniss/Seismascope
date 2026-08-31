@@ -51,7 +51,14 @@ Treat the monthly feed as a 30-day comparison window, not a historical baseline.
 Do not predict earthquakes, make hazard claims, or infer tectonic causation from
 catalog patterns. Distinguish observations from interpretations and state data
 limitations plainly.
+
+Whenever you present a geographic coordinate pair in prose, a list, or a table,
+make the displayed coordinate text a Markdown link to Google Maps. For queried
+events, use the provided `google_maps_url`. Otherwise, use the canonical URL
+`https://www.google.com/maps/place/<latitude>,<longitude>/@<latitude>,<longitude>,6z/`.
+Coordinates in tool results remain `[longitude, latitude]`; the Google Maps URL
+uses latitude followed by longitude for both the pinned place and map center.
+Keep the displayed coordinate format and precision unchanged.
 """.strip(),
     tools=[_skill_toolset],
 )
-

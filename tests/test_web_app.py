@@ -103,6 +103,8 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert "inlineData" in page.text
     assert 'replace(/-/g, "+").replace(/_/g, "/")' in page.text
     assert "renderMarkdown" in page.text
+    assert 'link.target = "_blank"' in page.text
+    assert 'link.rel = "noopener noreferrer"' in page.text
     assert 'class="image-viewer"' in page.text
     assert "showModal()" in page.text
     assert 'event.key === "Escape"' in page.text

@@ -9,6 +9,7 @@ Normalized event fields:
 
 - `id`: stable USGS event identifier within the catalog
 - `coord`: `[longitude, latitude]`
+- `google_maps_url`: Google Maps link with a pin at the coordinate and zoom level 6
 - `depth_km`: third GeoJSON coordinate, in kilometers
 - `magnitude`: USGS `mag`, which may be absent
 - `place`: USGS human-readable location, which may be absent
@@ -18,4 +19,3 @@ Normalized event fields:
 
 USGS can revise an event's magnitude, position, metadata, or status. Artifact
 versions preserve the exact summary feed used for each answer.
-

@@ -133,6 +133,9 @@ async def test_query_filters_sorts_deduplicates_and_tracks_provenance(
     assert result["artifact_name"] == "usgs-monthly.geojson"
     assert result["artifact_version"] == 0
     assert [event["id"] for event in result["events"]] == ["event-2", "event-1"]
+    assert result["events"][1]["google_maps_url"] == (
+        "https://www.google.com/maps/place/37.8,-122.3/@37.8,-122.3,6z/"
+    )
     assert result["deduplicated_count"] == 1
     assert result["skipped_invalid"] == 2
     assert artifact_context.state["active_event_ids"] == ["event-2", "event-1"]
@@ -163,6 +166,17 @@ async def test_query_handles_antimeridian_and_missing_optional_fields(
     )
 
     assert {event["id"] for event in wrapped["events"]} == {"event-2", "event-3"}
+    links_by_id = {
+        event["id"]: event["google_maps_url"] for event in wrapped["events"]
+    }
+    assert links_by_id == {
+        "event-2": (
+            "https://www.google.com/maps/place/10.0,179.5/@10.0,179.5,6z/"
+        ),
+        "event-3": (
+            "https://www.google.com/maps/place/11.0,-179.7/@11.0,-179.7,6z/"
+        ),
+    }
     assert missing["events"][0]["id"] == "event-4"
     assert missing["events"][0]["magnitude"] is None
     assert missing["events"][0]["place"] is None
@@ -181,4 +195,3 @@ async def test_query_rejects_bad_limits_times_and_missing_catalog(
     assert "download_usgs_feed" in missing["error"]
     assert bad_limit["status"] == "error"
     assert bad_time["status"] == "error"
-
