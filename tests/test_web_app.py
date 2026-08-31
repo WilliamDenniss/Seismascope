@@ -134,8 +134,13 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert prompt_bank_match is not None
     prompt_bank = json.loads(prompt_bank_match.group(1))
     featured_prompt = "Show me a map of all earthquakes in the last month."
-    assert len(prompt_bank) == 30
-    assert len(set(prompt_bank)) == 30
+    assert len(prompt_bank) == 33
+    assert len(set(prompt_bank)) == 33
+    assert {
+        "Map the largest earthquake in the last month and surrounding earthquakes.",
+        "Map earthquakes near 37.7775, -122.416389 in the last month.",
+        "Map earthquakes near Mountain View.",
+    } <= set(prompt_bank)
     assert prompt_bank.count(featured_prompt) == 1
     assert prompt_bank[0] == featured_prompt
     assert "const examplePromptCount = 6;" in page.text
