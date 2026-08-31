@@ -675,17 +675,97 @@
           return node;
         }
 
-        function responseText(events) {
+        function updateAgentMessage(row, text) {
+          const bubble = row.querySelector(".bubble");
+          bubble.replaceChildren(renderMarkdown(text));
+          scrollToBottom();
+        }
+
+        function agentEventText(event) {
+          if (event.author !== "seismic_analyst" || !event.content?.parts) return null;
           const chunks = [];
-          for (const event of events) {
-            if (event.author !== "seismic_analyst" || !event.content?.parts) continue;
-            for (const part of event.content.parts) {
-              if (typeof part.text === "string" && part.text.trim() && !part.thought) {
-                chunks.push(part.text.trim());
+          for (const part of event.content.parts) {
+            if (typeof part.text === "string" && !part.thought) chunks.push(part.text);
+          }
+          return chunks.length ? chunks.join("") : null;
+        }
+
+        function currentStreamText(state) {
+          const settled = state.segments.join("\n\n");
+          if (!state.partial) return settled;
+          return settled ? `${settled}\n\n${state.partial}` : state.partial;
+        }
+
+        function applyStreamText(state, event) {
+          const text = agentEventText(event);
+          if (text === null) return null;
+          if (event.partial === true) {
+            state.partial += text;
+          } else {
+            const settled = (text || state.partial).trim();
+            if (settled) state.segments.push(settled);
+            state.partial = "";
+          }
+          return currentStreamText(state);
+        }
+
+        function finishStreamText(state) {
+          const partial = state.partial.trim();
+          if (partial) state.segments.push(partial);
+          state.partial = "";
+          return currentStreamText(state);
+        }
+
+        function splitSseFrame(buffer) {
+          const boundaries = ["\n\n", "\r\n\r\n"]
+            .map((delimiter) => ({ index: buffer.indexOf(delimiter), delimiter }))
+            .filter(({ index }) => index >= 0)
+            .sort((left, right) => left.index - right.index);
+          if (!boundaries.length) return null;
+          const { index, delimiter } = boundaries[0];
+          const end = index + delimiter.length;
+          return { frame: buffer.slice(0, end), rest: buffer.slice(end) };
+        }
+
+        function parseSseFrame(frame) {
+          const data = frame
+            .split(/\r?\n/)
+            .filter((line) => line.startsWith("data:"))
+            .map((line) => line.slice(5).replace(/^ /, ""))
+            .join("\n");
+          if (!data || data === "[DONE]") return null;
+          try {
+            return JSON.parse(data);
+          } catch (_) {
+            throw new Error("The agent returned an invalid streaming event.");
+          }
+        }
+
+        async function* streamEvents(response) {
+          if (!response.body) throw new Error("Streaming responses are unavailable in this browser.");
+          const reader = response.body.getReader();
+          const decoder = new TextDecoder();
+          let buffer = "";
+          try {
+            while (true) {
+              const { value, done } = await reader.read();
+              if (done) break;
+              buffer += decoder.decode(value, { stream: true });
+              let split;
+              while ((split = splitSseFrame(buffer))) {
+                buffer = split.rest;
+                const event = parseSseFrame(split.frame);
+                if (event !== null) yield event;
               }
             }
+            buffer += decoder.decode();
+            if (buffer.trim()) {
+              const event = parseSseFrame(buffer);
+              if (event !== null) yield event;
+            }
+          } finally {
+            reader.releaseLock();
           }
-          return chunks.join("\n\n");
         }
 
         function displayReason(value) {
@@ -869,30 +949,52 @@
           prompt.style.height = "auto";
           setBusy(true);
           const thinking = addThinking();
+          const streamState = { segments: [], partial: "" };
+          const events = [];
+          let agentMessage = null;
 
           try {
-            const response = await fetch(apiUrl("/run"), {
+            const response = await fetch(apiUrl("/run_sse"), {
               method: "POST",
-              headers: { "Accept": "application/json", "Content-Type": "application/json" },
+              headers: { "Accept": "text/event-stream", "Content-Type": "application/json" },
               body: JSON.stringify({
                 appName: config.appName,
                 userId,
                 sessionId,
                 newMessage: { role: "user", parts: [{ text: cleanText }] },
-                streaming: false
+                streaming: true
               })
             });
             if (!response.ok) throw new Error(await errorDetail(response));
-            const events = await response.json();
-            if (!Array.isArray(events)) throw new Error("The agent returned an unexpected response.");
+            if (!response.headers.get("content-type")?.includes("text/event-stream")) {
+              throw new Error("The agent returned an unexpected response type.");
+            }
+
+            for await (const event of streamEvents(response)) {
+              if (!event || typeof event !== "object" || Array.isArray(event)) {
+                throw new Error("The agent returned an unexpected streaming event.");
+              }
+              if (typeof event.error === "string" && event.error.trim()) {
+                throw new Error(event.error.trim());
+              }
+              events.push(event);
+              const text = applyStreamText(streamState, event);
+              if (text !== null && (text.trim() || agentMessage)) {
+                thinking.remove();
+                if (!agentMessage) agentMessage = addMessage("agent", "");
+                updateAgentMessage(agentMessage, text);
+              }
+            }
+
+            const text = finishStreamText(streamState);
             thinking.remove();
-            const text = responseText(events);
             if (text) {
-              addMessage("agent", text);
+              if (!agentMessage) agentMessage = addMessage("agent", "");
+              updateAgentMessage(agentMessage, text);
             } else {
               addMessage(
                 "agent",
-                responseError(events) || "The agent returned HTTP 200 but no text or diagnostic details.",
+                responseError(events) || "The agent stream ended without text or diagnostic details.",
                 "error"
               );
             }
@@ -901,6 +1003,8 @@
             }
           } catch (error) {
             thinking.remove();
+            const partialText = finishStreamText(streamState);
+            if (agentMessage && partialText) updateAgentMessage(agentMessage, partialText);
             addMessage("agent", error instanceof Error ? error.message : "The request failed.", "error");
           } finally {
             setBusy(false);

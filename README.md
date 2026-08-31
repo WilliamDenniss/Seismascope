@@ -27,7 +27,8 @@ Example prompts:
 ## Run the public web app
 
 The production-facing app serves a small browser interface and ADK's API from
-one FastAPI process. Generated map artifacts are displayed inline in the chat.
+one FastAPI process. Model text streams into the active response over SSE, and
+generated map artifacts are displayed inline in the chat.
 
 ```bash
 python3 -m uv sync

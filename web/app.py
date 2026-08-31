@@ -108,7 +108,11 @@ def _client_ip(request: Request) -> str:
     return "unknown"
 
 
-def _validate_run_payload(body: bytes) -> tuple[dict[str, Any] | None, str | None]:
+def _validate_run_payload(
+    body: bytes,
+    *,
+    expected_streaming: bool,
+) -> tuple[dict[str, Any] | None, str | None]:
     if len(body) > MAX_REQUEST_BYTES:
         return None, "Request body is too large."
     try:
@@ -127,8 +131,13 @@ def _validate_run_payload(body: bytes) -> tuple[dict[str, Any] | None, str | Non
         payload.get("sessionId")
     ):
         return None, "userId and sessionId must be UUIDs."
-    if payload.get("streaming", False) is not False:
-        return None, "Streaming requests are not enabled for this demo."
+    streaming = payload.get("streaming", False)
+    if not isinstance(streaming, bool):
+        return None, "streaming must be a boolean."
+    if streaming is not expected_streaming:
+        if expected_streaming:
+            return None, "streaming must be true for /run_sse."
+        return None, "Streaming requests must use /run_sse."
 
     message = payload.get("newMessage")
     if not isinstance(message, dict) or message.get("role") != "user":
@@ -170,6 +179,47 @@ def _artifact_request(path: str) -> bool:
         and ".." not in artifact_path.parts
         and artifact_path.suffix.lower() == ".png"
     )
+
+
+def _split_sse_frame(buffer: bytes) -> tuple[bytes, bytes] | None:
+    """Remove one complete SSE frame from a byte buffer, if available."""
+    boundaries = [
+        (index, delimiter)
+        for delimiter in (b"\n\n", b"\r\n\r\n")
+        if (index := buffer.find(delimiter)) >= 0
+    ]
+    if not boundaries:
+        return None
+    index, delimiter = min(boundaries, key=lambda item: item[0])
+    end = index + len(delimiter)
+    return buffer[:end], buffer[end:]
+
+
+def _sanitize_sse_frame(frame: bytes) -> tuple[bytes, dict[str, Any] | None]:
+    """Replace ADK's internal streaming-error payload with a public message."""
+    try:
+        lines = frame.decode("utf-8").splitlines()
+        data = "\n".join(
+            line[5:].removeprefix(" ")
+            for line in lines
+            if line.startswith("data:")
+        )
+        payload = json.loads(data)
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return frame, None
+
+    if not isinstance(payload, dict) or "error" not in payload:
+        return frame, None
+
+    error_id = uuid4().hex[:12]
+    public_payload = {
+        "error": (
+            "The server could not complete this request. "
+            f"Error reference: {error_id}."
+        )
+    }
+    sanitized = f"data: {json.dumps(public_payload, separators=(',', ':'))}\n\n"
+    return sanitized.encode("utf-8"), {"error_id": error_id, "payload": payload}
 
 
 class WindowRateLimiter:
@@ -254,11 +304,12 @@ def create_app() -> FastAPI:
         artifact_get = method == "GET" and _artifact_request(path)
         if method == "OPTIONS":
             return await call_next(request)
-        if not ((method == "GET" and public_get) or artifact_get or (method == "POST" and path == "/run")):
+        public_run = method == "POST" and path in {"/run", "/run_sse"}
+        if not ((method == "GET" and public_get) or artifact_get or public_run):
             return JSONResponse({"detail": "Not found."}, status_code=404)
 
         session_id: str | None = None
-        if method == "POST" and path == "/run":
+        if public_run:
             content_type = request.headers.get("content-type", "")
             if not content_type.lower().startswith("application/json"):
                 return JSONResponse(
@@ -266,7 +317,10 @@ def create_app() -> FastAPI:
                     status_code=415,
                 )
             body = await request.body()
-            payload, validation_error = _validate_run_payload(body)
+            payload, validation_error = _validate_run_payload(
+                body,
+                expected_streaming=path == "/run_sse",
+            )
             if validation_error or payload is None:
                 return JSONResponse(
                     {"detail": validation_error or "Invalid request."},
@@ -308,13 +362,81 @@ def create_app() -> FastAPI:
                 },
                 status_code=500,
             )
-        finally:
             if session_id is not None:
                 await active_sessions.release(session_id)
+                session_id = None
+
+        if session_id is not None:
+            body_iterator = response.body_iterator
+
+            if path == "/run_sse":
+
+                async def protected_stream():
+                    buffer = b""
+                    try:
+                        async for chunk in body_iterator:
+                            buffer += (
+                                chunk.encode("utf-8")
+                                if isinstance(chunk, str)
+                                else bytes(chunk)
+                            )
+                            while split := _split_sse_frame(buffer):
+                                frame, buffer = split
+                                sanitized, error = _sanitize_sse_frame(frame)
+                                if error is not None:
+                                    logger.error(
+                                        "ADK streaming error %s: %r",
+                                        error["error_id"],
+                                        error["payload"],
+                                    )
+                                yield sanitized
+                        if buffer:
+                            sanitized, error = _sanitize_sse_frame(buffer)
+                            if error is not None:
+                                logger.error(
+                                    "ADK streaming error %s: %r",
+                                    error["error_id"],
+                                    error["payload"],
+                                )
+                            yield sanitized
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception:
+                        error_id = uuid4().hex[:12]
+                        logger.exception(
+                            "Unhandled public stream error %s", error_id
+                        )
+                        public_error = {
+                            "error": (
+                                "The server could not complete this request. "
+                                f"Error reference: {error_id}."
+                            )
+                        }
+                        yield (
+                            f"data: {json.dumps(public_error, separators=(',', ':'))}"
+                            "\n\n"
+                        ).encode("utf-8")
+                    finally:
+                        await active_sessions.release(session_id)
+
+                response.body_iterator = protected_stream()
+            else:
+
+                async def release_after_response():
+                    try:
+                        async for chunk in body_iterator:
+                            yield chunk
+                    finally:
+                        await active_sessions.release(session_id)
+
+                response.body_iterator = release_after_response()
 
         response.headers.setdefault("X-Content-Type-Options", "nosniff")
         response.headers.setdefault("Referrer-Policy", "no-referrer")
         response.headers.setdefault("X-Frame-Options", "DENY")
+        if path == "/run_sse":
+            response.headers["Cache-Control"] = "no-store"
+            response.headers["X-Accel-Buffering"] = "no"
         if path in {"/", "/runtime-config.json"}:
             response.headers["Cache-Control"] = "no-store"
         return response

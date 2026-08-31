@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from collections.abc import Callable
@@ -8,25 +9,37 @@ from uuid import uuid4
 
 from fastapi import FastAPI
 from fastapi import Request
+from fastapi.responses import StreamingResponse
 import httpx
 import pytest
 
 from web import app as web_app
 
 
-def _run_payload(*, text: str = "Map recent earthquakes") -> dict[str, Any]:
+def _run_payload(
+    *,
+    text: str = "Map recent earthquakes",
+    streaming: bool = False,
+) -> dict[str, Any]:
     return {
         "appName": "quake_agent",
         "userId": str(uuid4()),
         "sessionId": str(uuid4()),
         "newMessage": {"role": "user", "parts": [{"text": text}]},
-        "streaming": False,
+        "streaming": streaming,
     }
 
 
 @pytest.fixture
 def app_factory(monkeypatch) -> Callable[..., FastAPI]:
-    def build(*, fail_run: bool = False, **environment: str) -> FastAPI:
+    def build(
+        *,
+        fail_run: bool = False,
+        stream_error: bool = False,
+        stream_started: asyncio.Event | None = None,
+        stream_release: asyncio.Event | None = None,
+        **environment: str,
+    ) -> FastAPI:
         for name in (
             "QUAKE_AGENT_API_BASE_URL",
             "QUAKE_AGENT_ALLOWED_ORIGINS",
@@ -61,6 +74,52 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
                         },
                     }
                 ]
+
+            @app.post("/run_sse")
+            async def run_sse(request: Request) -> StreamingResponse:
+                if fail_run:
+                    raise RuntimeError("private test failure")
+                payload = await request.json()
+
+                async def event_stream():
+                    if stream_started is not None:
+                        stream_started.set()
+                    if stream_release is not None:
+                        await stream_release.wait()
+                    if stream_error:
+                        yield (
+                            'data: {"error":"private stream failure",'
+                            '"error_details":{"stacktrace":"secret traceback"}}\n\n'
+                        )
+                        return
+                    text = payload["newMessage"]["parts"][0]["text"]
+                    partial_event = {
+                        "author": "seismic_analyst",
+                        "partial": True,
+                        "content": {
+                            "role": "model",
+                            "parts": [{"text": text[:8]}],
+                        },
+                        "actions": {"artifactDelta": {}},
+                    }
+                    final_event = {
+                        "author": "seismic_analyst",
+                        "partial": False,
+                        "content": {
+                            "role": "model",
+                            "parts": [{"text": text}],
+                        },
+                        "actions": {
+                            "artifactDelta": {"earthquake-map.png": 0}
+                        },
+                    }
+                    yield f"data: {json.dumps(partial_event)}\n\n"
+                    yield f"data: {json.dumps(final_event)}\n\n"
+
+                return StreamingResponse(
+                    event_stream(),
+                    media_type="text/event-stream",
+                )
 
             @app.get(
                 "/apps/{app_name}/users/{user_id}/sessions/{session_id}/"
@@ -115,7 +174,12 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert "event.errorMessage" in page.text
     assert "event.finishReason" in page.text
     assert "HTTP ${response.status}" in page.text
-    assert "no text or diagnostic details" in page.text
+    assert "stream ended without text or diagnostic details" in page.text
+    assert 'apiUrl("/run_sse")' in page.text
+    assert '"Accept": "text/event-stream"' in page.text
+    assert "response.body.getReader()" in page.text
+    assert "streaming: true" in page.text
+    assert "event.partial === true" in page.text
     assert 'replace(/-/g, "+").replace(/_/g, "/")' in page.text
     assert "renderMarkdown" in page.text
     assert 'link.target = "_blank"' in page.text
@@ -176,6 +240,69 @@ async def test_valid_run_body_reaches_adk_with_body_intact(app_factory) -> None:
     assert response.headers["x-content-type-options"] == "nosniff"
 
 
+async def test_streamed_run_reaches_adk_and_returns_sse(app_factory) -> None:
+    app = app_factory()
+    payload = _run_payload(
+        text="Show the largest hourly earthquakes",
+        streaming=True,
+    )
+    async with _client(app) as client:
+        response = await client.post("/run_sse", json=payload)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("text/event-stream")
+    assert response.headers["cache-control"] == "no-store"
+    assert response.headers["x-accel-buffering"] == "no"
+    frames = [
+        json.loads(line.removeprefix("data: "))
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+    assert frames[0]["partial"] is True
+    assert frames[1]["partial"] is False
+    assert frames[1]["content"]["parts"][0]["text"] == payload["newMessage"][
+        "parts"
+    ][0]["text"]
+    assert frames[1]["actions"]["artifactDelta"] == {
+        "earthquake-map.png": 0
+    }
+
+
+async def test_streamed_run_sanitizes_adk_errors(app_factory) -> None:
+    app = app_factory(stream_error=True)
+    async with _client(app) as client:
+        response = await client.post(
+            "/run_sse",
+            json=_run_payload(streaming=True),
+        )
+
+    assert response.status_code == 200
+    assert "private stream failure" not in response.text
+    assert "secret traceback" not in response.text
+    event = json.loads(response.text.removeprefix("data: "))
+    assert event["error"].startswith("The server could not complete this request.")
+    assert "Error reference:" in event["error"]
+
+
+async def test_session_stays_locked_until_stream_finishes(app_factory) -> None:
+    stream_started = asyncio.Event()
+    stream_release = asyncio.Event()
+    app = app_factory(
+        stream_started=stream_started,
+        stream_release=stream_release,
+    )
+    payload = _run_payload(streaming=True)
+    async with _client(app) as client:
+        first_request = asyncio.create_task(client.post("/run_sse", json=payload))
+        await asyncio.wait_for(stream_started.wait(), timeout=1)
+        second = await client.post("/run_sse", json=payload)
+        stream_release.set()
+        first = await asyncio.wait_for(first_request, timeout=1)
+
+    assert first.status_code == 200
+    assert second.status_code == 409
+
+
 async def test_unhandled_run_error_returns_safe_json_500(app_factory) -> None:
     app = app_factory(fail_run=True)
     async with _client(app) as client:
@@ -194,7 +321,8 @@ async def test_unhandled_run_error_returns_safe_json_500(app_factory) -> None:
     [
         ({"appName": "other"}, "appName"),
         ({"userId": "not-a-uuid"}, "UUID"),
-        ({"streaming": True}, "Streaming"),
+        ({"streaming": True}, "/run_sse"),
+        ({"streaming": "yes"}, "boolean"),
         ({"newMessage": {"role": "user", "parts": [{"text": ""}]}}, "empty"),
         (
             {
@@ -220,6 +348,15 @@ async def test_rejects_unsupported_public_run_payloads(
 
     assert response.status_code == 400
     assert expected in response.json()["detail"]
+
+
+async def test_stream_endpoint_requires_streaming_true(app_factory) -> None:
+    app = app_factory()
+    async with _client(app) as client:
+        response = await client.post("/run_sse", json=_run_payload())
+
+    assert response.status_code == 400
+    assert "streaming must be true" in response.json()["detail"]
 
 
 async def test_rate_limits_valid_prompts_by_client(app_factory) -> None:
