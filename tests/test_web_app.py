@@ -225,6 +225,8 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert "if (historyPrompt !== firstPrompt) window.location.reload();" in page.text
     assert "if (sharedPrompt) submitPrompt(sharedPrompt);" in page.text
     assert "clearSharedPrompt();" in page.text
+    assert 'newConversation.addEventListener("click"' in page.text
+    assert "newConversation.disabled" not in page.text
     assert '<button class="prompt-chip"' not in page.text
     assert page.headers["cache-control"] == "no-store"
     assert config.json() == {
