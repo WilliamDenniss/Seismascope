@@ -3,7 +3,7 @@ name: render-earthquake-map
 description: Render a stored USGS feed or a supplied set of event circles on the canonical world-map PNG, or revise the latest saved map specification. Use after the source catalog or relevant events have been selected.
 metadata:
   adk_additional_tools:
-    - render_usgs_feed_on_world_map
+    - plot_usgs_feed_on_map
     - plot_data_points_on_map
     - load_current_map_spec
 ---
@@ -13,7 +13,7 @@ metadata:
 This skill draws events; it does not decide which earthquakes are relevant.
 
 - For a whole stored feed or a catalog-scale result, call
-  `render_usgs_feed_on_world_map` with the feed and exact artifact version from
+  `plot_usgs_feed_on_map` with the feed and exact artifact version from
   `download_usgs_feed`. Do not query, copy, or serialize the event array. This
   artifact-backed path loads and renders every matching event inside the tool,
   so its function call stays small even for the monthly catalog.
@@ -52,7 +52,7 @@ This skill draws events; it does not decide which earthquakes are relevant.
 - For a follow-up modification to a hand-supplied map, call
   `load_current_map_spec`, edit its event array, and pass the complete revised
   array back to `plot_data_points_on_map`. For a catalog-backed map, rerun
-  `render_usgs_feed_on_world_map` using the saved `event_source` catalog version
+  `plot_usgs_feed_on_map` using the saved `event_source` catalog version
   and revised filters; its specification intentionally does not expand the
   thousands of event objects. Preserve the saved crop request and padding
   unless the user asks to change them.

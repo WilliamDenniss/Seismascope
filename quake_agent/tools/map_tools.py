@@ -971,7 +971,7 @@ def _render_map(
     return output.getvalue(), spec, warnings, skipped
 
 
-async def render_usgs_feed_on_world_map(
+async def plot_usgs_feed_on_map(
     feed: FeedName,
     artifact_version: int | None = None,
     min_magnitude: float | None = None,
@@ -983,7 +983,7 @@ async def render_usgs_feed_on_world_map(
     crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
-    """Render a stored USGS catalog without putting its events in model context.
+    """Plot a stored USGS catalog without putting its events in model context.
 
     Args:
         feed: The stored "hourly" or "monthly" catalog.

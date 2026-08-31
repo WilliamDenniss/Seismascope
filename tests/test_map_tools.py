@@ -27,7 +27,7 @@ from quake_agent.tools.map_tools import latitude_radius_to_pixels
 from quake_agent.tools.map_tools import load_current_map_spec
 from quake_agent.tools.map_tools import project_web_mercator
 from quake_agent.tools.map_tools import plot_data_points_on_map
-from quake_agent.tools.map_tools import render_usgs_feed_on_world_map
+from quake_agent.tools.map_tools import plot_usgs_feed_on_map
 from conftest import ArtifactContext
 
 
@@ -90,7 +90,7 @@ def test_renderer_schema_exposes_optional_agent_defined_legend() -> None:
 
 
 def test_catalog_renderer_schema_never_accepts_model_supplied_events() -> None:
-    declaration = FunctionTool(render_usgs_feed_on_world_map)._get_declaration()
+    declaration = FunctionTool(plot_usgs_feed_on_map)._get_declaration()
     schema = declaration.parameters_json_schema
 
     assert schema is not None
@@ -138,7 +138,7 @@ async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(
     )
     artifact_context.state["catalog_monthly_version"] = catalog_version
 
-    rendered = await render_usgs_feed_on_world_map(
+    rendered = await plot_usgs_feed_on_map(
         "monthly",
         artifact_version=catalog_version,
         tool_context=artifact_context,

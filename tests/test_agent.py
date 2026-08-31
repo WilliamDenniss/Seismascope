@@ -21,7 +21,7 @@ def test_agent_loads_both_filesystem_skills_and_public_tool_schemas() -> None:
             "query_usgs_feed",
         },
         "render-earthquake-map": {
-            "render_usgs_feed_on_world_map",
+            "plot_usgs_feed_on_map",
             "plot_data_points_on_map",
             "load_current_map_spec",
         },
@@ -66,7 +66,7 @@ async def test_activated_skills_expose_only_their_dynamic_tools() -> None:
         "query_usgs_feed",
     }
     assert {tool.name for tool in map_tools} == {
-        "render_usgs_feed_on_world_map",
+        "plot_usgs_feed_on_map",
         "plot_data_points_on_map",
         "load_current_map_spec",
     }
