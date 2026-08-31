@@ -85,3 +85,19 @@ or plain-text environment value.
 ```bash
 python3 -m uv run pytest
 ```
+
+## License
+
+Licensed under the [Apache License 2.0](LICENSE).
+
+## Third-party asset attribution
+
+The bundled base-map images in `static/world_map.png`,
+`static/world_map_2x.png`, and `static/world_map_4x.png` use the
+[OpenFreeMap Liberty style](https://openfreemap.org/) and
+[OpenMapTiles](https://openmaptiles.org/). Map data ©
+[OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available
+under the [Open Data Commons Open Database License](https://opendatacommons.org/licenses/odbl/).
+
+Third-party assets remain subject to their respective licenses and attribution
+requirements; they are not relicensed under the project's Apache License 2.0.
