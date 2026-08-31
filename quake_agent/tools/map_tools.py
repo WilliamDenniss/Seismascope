@@ -1175,7 +1175,7 @@ async def render_usgs_feed_on_world_map(
     }
 
 
-async def render_events_on_world_map(
+async def plot_data_points_on_map(
     events: list[MapEvent],
     artifact_name: str = DEFAULT_MAP_ARTIFACT,
     crop_to_drawn_area: bool = False,

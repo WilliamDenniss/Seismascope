@@ -4,7 +4,7 @@ description: Render a stored USGS feed or a supplied set of event circles on the
 metadata:
   adk_additional_tools:
     - render_usgs_feed_on_world_map
-    - render_events_on_world_map
+    - plot_data_points_on_map
     - load_current_map_spec
 ---
 
@@ -21,11 +21,11 @@ This skill draws events; it does not decide which earthquakes are relevant.
   sizes, labels only magnitude 6+ events, and saves a compact specification that
   references the source catalog artifact. Use it for requests such as "all
   earthquakes in the last month."
-- For a new map, call `render_events_on_world_map` with objects containing
+- For a new map, call `plot_data_points_on_map` with objects containing
   `coord`, `label`, `latitude_radius`, and `color` only when the selected event
   set is small enough to have been returned by `query_usgs_feed`.
 - Before rendering a new map, check whether the selected event set is empty. If
-  no events match the user's filters, do not call `render_events_on_world_map`
+  no events match the user's filters, do not call `plot_data_points_on_map`
   or create map artifacts. Report the zero-result finding and catalog
   provenance instead. Render an empty base map only when the user explicitly
   requests one.
@@ -51,7 +51,7 @@ This skill draws events; it does not decide which earthquakes are relevant.
   legend is not required for one-off highlighting unless the user requests it.
 - For a follow-up modification to a hand-supplied map, call
   `load_current_map_spec`, edit its event array, and pass the complete revised
-  array back to `render_events_on_world_map`. For a catalog-backed map, rerun
+  array back to `plot_data_points_on_map`. For a catalog-backed map, rerun
   `render_usgs_feed_on_world_map` using the saved `event_source` catalog version
   and revised filters; its specification intentionally does not expand the
   thousands of event objects. Preserve the saved crop request and padding

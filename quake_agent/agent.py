@@ -12,7 +12,7 @@ from google.adk.tools.skill_toolset import SkillToolset
 from .tools.data_tools import download_usgs_feed
 from .tools.data_tools import query_usgs_feed
 from .tools.map_tools import load_current_map_spec
-from .tools.map_tools import render_events_on_world_map
+from .tools.map_tools import plot_data_points_on_map
 from .tools.map_tools import render_usgs_feed_on_world_map
 
 
@@ -28,7 +28,7 @@ _skill_toolset = SkillToolset(
         download_usgs_feed,
         query_usgs_feed,
         render_usgs_feed_on_world_map,
-        render_events_on_world_map,
+        plot_data_points_on_map,
         load_current_map_spec,
     ],
 )

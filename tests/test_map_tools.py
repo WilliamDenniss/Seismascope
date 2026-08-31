@@ -26,7 +26,7 @@ from quake_agent.tools.map_tools import _wrapped_circle_centers
 from quake_agent.tools.map_tools import latitude_radius_to_pixels
 from quake_agent.tools.map_tools import load_current_map_spec
 from quake_agent.tools.map_tools import project_web_mercator
-from quake_agent.tools.map_tools import render_events_on_world_map
+from quake_agent.tools.map_tools import plot_data_points_on_map
 from quake_agent.tools.map_tools import render_usgs_feed_on_world_map
 from conftest import ArtifactContext
 
@@ -73,13 +73,13 @@ def test_map_source_selection_uses_long_edge_boundaries(
 
 
 def test_threshold_arguments_are_not_exposed_by_the_renderer() -> None:
-    parameters = inspect.signature(render_events_on_world_map).parameters
+    parameters = inspect.signature(plot_data_points_on_map).parameters
     assert "high_resolution_crop_threshold_percent" not in parameters
     assert "two_x_crop_threshold_percent" not in parameters
 
 
 def test_renderer_schema_exposes_optional_agent_defined_legend() -> None:
-    declaration = FunctionTool(render_events_on_world_map)._get_declaration()
+    declaration = FunctionTool(plot_data_points_on_map)._get_declaration()
     schema = declaration.parameters_json_schema
 
     assert schema is not None
@@ -233,8 +233,8 @@ async def test_render_saves_versioned_png_and_spec_without_mutating_source(
         ),
     ]
 
-    first = await render_events_on_world_map(events, tool_context=artifact_context)
-    second = await render_events_on_world_map(events[:2], tool_context=artifact_context)
+    first = await plot_data_points_on_map(events, tool_context=artifact_context)
+    second = await plot_data_points_on_map(events[:2], tool_context=artifact_context)
 
     assert first["status"] == "ok"
     assert first["rendered_count"] == 2
@@ -277,7 +277,7 @@ async def test_render_draws_larger_circles_after_smaller_circles(
 
     monkeypatch.setattr(map_tools, "_wrapped_circle_centers", record_draw_order)
 
-    rendered = await render_events_on_world_map(
+    rendered = await plot_data_points_on_map(
         [
             MapEvent(
                 coord=[0, 0],
@@ -313,12 +313,12 @@ async def test_render_persists_titled_and_untitled_legends_without_changing_view
             color="#facc15",
         )
     ]
-    plain = await render_events_on_world_map(
+    plain = await plot_data_points_on_map(
         events,
         artifact_name="legend-map.png",
         tool_context=artifact_context,
     )
-    with_legend = await render_events_on_world_map(
+    with_legend = await plot_data_points_on_map(
         events,
         artifact_name="legend-map.png",
         legend=MapLegend(
@@ -368,7 +368,7 @@ async def test_saved_legend_survives_a_follow_up_revision(artifact_context) -> N
             color="#f97316",
         )
     ]
-    first = await render_events_on_world_map(
+    first = await plot_data_points_on_map(
         events,
         legend=MapLegend(
             title="Magnitude",
@@ -379,7 +379,7 @@ async def test_saved_legend_survives_a_follow_up_revision(artifact_context) -> N
     loaded = await load_current_map_spec(tool_context=artifact_context)
     saved_legend = loaded["spec"]["legend"]
 
-    revised = await render_events_on_world_map(
+    revised = await plot_data_points_on_map(
         [MapEvent(**loaded["spec"]["events"][0])],
         legend=MapLegend(
             title=saved_legend["title"],
@@ -396,7 +396,7 @@ async def test_saved_legend_survives_a_follow_up_revision(artifact_context) -> N
 async def test_state_and_artifacts_survive_new_file_service_instance(tmp_path: Path) -> None:
     root = tmp_path / "persistent-artifacts"
     first_context = ArtifactContext(root)
-    rendered = await render_events_on_world_map(
+    rendered = await plot_data_points_on_map(
         [
             MapEvent(
                 coord=[0, 0],
@@ -418,7 +418,7 @@ async def test_state_and_artifacts_survive_new_file_service_instance(tmp_path: P
 async def test_crop_to_drawn_area_records_dimensions_bounds_and_padding(
     artifact_context,
 ) -> None:
-    rendered = await render_events_on_world_map(
+    rendered = await plot_data_points_on_map(
         [
             MapEvent(
                 coord=[0, 0],
@@ -463,7 +463,7 @@ async def test_crop_to_drawn_area_records_dimensions_bounds_and_padding(
 
 
 async def test_crop_stitches_antimeridian_into_compact_output(artifact_context) -> None:
-    rendered = await render_events_on_world_map(
+    rendered = await plot_data_points_on_map(
         [
             MapEvent(
                 coord=[179.5, 0],
@@ -504,14 +504,14 @@ async def test_legend_does_not_change_scaled_antimeridian_crop(
             color="royalblue",
         )
     ]
-    plain = await render_events_on_world_map(
+    plain = await plot_data_points_on_map(
         events,
         artifact_name="plain-crop.png",
         crop_to_drawn_area=True,
         crop_padding_px=8,
         tool_context=artifact_context,
     )
-    with_legend = await render_events_on_world_map(
+    with_legend = await plot_data_points_on_map(
         events,
         artifact_name="legend-crop.png",
         crop_to_drawn_area=True,
@@ -540,7 +540,7 @@ async def test_crop_uses_two_x_map_when_it_reaches_minimum_long_edge(
         latitude_radius=50,
         color="#00aa00",
     )
-    rendered = await render_events_on_world_map(
+    rendered = await plot_data_points_on_map(
         [event],
         crop_to_drawn_area=True,
         tool_context=artifact_context,
@@ -556,7 +556,7 @@ async def test_crop_uses_two_x_map_when_it_reaches_minimum_long_edge(
 async def test_crop_uses_four_x_map_when_two_x_is_still_too_small(
     artifact_context,
 ) -> None:
-    rendered = await render_events_on_world_map(
+    rendered = await plot_data_points_on_map(
         [
             MapEvent(
                 coord=[0, 0],
@@ -590,7 +590,7 @@ async def test_349_pixel_crop_uses_four_x_map_and_warns_target_is_unmet(
             "wraps_antimeridian": False,
         },
     )
-    rendered = await render_events_on_world_map(
+    rendered = await plot_data_points_on_map(
         [
             MapEvent(
                 coord=[0, 0],
@@ -613,7 +613,7 @@ async def test_349_pixel_crop_uses_four_x_map_and_warns_target_is_unmet(
 async def test_non_square_crop_uses_standard_map_when_long_edge_meets_minimum(
     artifact_context,
 ) -> None:
-    rendered = await render_events_on_world_map(
+    rendered = await plot_data_points_on_map(
         [
             MapEvent(
                 coord=[longitude, 0],
@@ -636,7 +636,7 @@ async def test_non_square_crop_uses_standard_map_when_long_edge_meets_minimum(
 
 
 async def test_crop_with_no_drawable_content_keeps_full_map(artifact_context) -> None:
-    rendered = await render_events_on_world_map(
+    rendered = await plot_data_points_on_map(
         [],
         crop_to_drawn_area=True,
         tool_context=artifact_context,
@@ -653,11 +653,11 @@ async def test_crop_with_no_drawable_content_keeps_full_map(artifact_context) ->
 async def test_renderer_clamps_latitude_and_rejects_unsafe_artifact_name(
     artifact_context,
 ) -> None:
-    clamped = await render_events_on_world_map(
+    clamped = await plot_data_points_on_map(
         [MapEvent(coord=[190, 90], label="Clamped", latitude_radius=4, color="red")],
         tool_context=artifact_context,
     )
-    unsafe = await render_events_on_world_map(
+    unsafe = await plot_data_points_on_map(
         [], artifact_name="../escape.png", tool_context=artifact_context
     )
 
@@ -694,7 +694,7 @@ async def test_invalid_or_oversized_legend_does_not_save_artifacts(
     legend: MapLegend,
     error_fragment: str,
 ) -> None:
-    rendered = await render_events_on_world_map(
+    rendered = await plot_data_points_on_map(
         [MapEvent(coord=[0, 0], label="", latitude_radius=2, color="red")],
         legend=legend,
         tool_context=artifact_context,
