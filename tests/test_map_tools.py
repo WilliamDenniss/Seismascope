@@ -9,8 +9,10 @@ import pytest
 
 from quake_agent.tools.map_tools import BASE_MAP_PATH
 from quake_agent.tools.map_tools import DEFAULT_HIGH_RESOLUTION_CROP_THRESHOLD_PERCENT
+from quake_agent.tools.map_tools import DEFAULT_TWO_X_CROP_THRESHOLD_PERCENT
 from quake_agent.tools.map_tools import HIGH_RESOLUTION_BASE_MAP_PATH
 from quake_agent.tools.map_tools import MapEvent
+from quake_agent.tools.map_tools import TWO_X_BASE_MAP_PATH
 from quake_agent.tools.map_tools import WEB_MERCATOR_MAX_LAT
 from quake_agent.tools.map_tools import _wrapped_circle_centers
 from quake_agent.tools.map_tools import latitude_radius_to_pixels
@@ -182,6 +184,42 @@ async def test_crop_stitches_antimeridian_into_compact_output(artifact_context) 
     assert rendered["bounds"]["west"] > rendered["bounds"]["east"]
 
 
+async def test_medium_crop_uses_two_x_map_and_its_own_threshold(
+    artifact_context,
+) -> None:
+    event = MapEvent(
+        coord=[0, 0],
+        label="",
+        latitude_radius=40,
+        color="#00aa00",
+    )
+    rendered = await render_events_on_world_map(
+        [event],
+        crop_to_drawn_area=True,
+        tool_context=artifact_context,
+    )
+    standard = await render_events_on_world_map(
+        [event],
+        artifact_name="standard.png",
+        crop_to_drawn_area=True,
+        two_x_crop_threshold_percent=0,
+        tool_context=artifact_context,
+    )
+
+    assert rendered["status"] == "ok"
+    assert (
+        DEFAULT_HIGH_RESOLUTION_CROP_THRESHOLD_PERCENT
+        <= rendered["crop"]["area_percent_of_world"]
+        < DEFAULT_TWO_X_CROP_THRESHOLD_PERCENT
+    )
+    assert rendered["source_map"] == "static/world_map_2x.png"
+    assert rendered["crop"]["source_padding_px"] == 64
+    assert rendered["crop"]["two_x_threshold_percent"] == 25
+    assert standard["status"] == "ok"
+    assert standard["source_map"] == "static/world_map.png"
+    assert TWO_X_BASE_MAP_PATH.is_file()
+
+
 async def test_zero_threshold_keeps_standard_map_for_small_crop(
     artifact_context,
 ) -> None:
@@ -196,6 +234,7 @@ async def test_zero_threshold_keeps_standard_map_for_small_crop(
         ],
         crop_to_drawn_area=True,
         high_resolution_crop_threshold_percent=0,
+        two_x_crop_threshold_percent=0,
         tool_context=artifact_context,
     )
 
@@ -203,6 +242,7 @@ async def test_zero_threshold_keeps_standard_map_for_small_crop(
     assert rendered["source_map"] == "static/world_map.png"
     assert rendered["crop"]["used_high_resolution_source"] is False
     assert rendered["crop"]["high_resolution_threshold_percent"] == 0
+    assert rendered["crop"]["two_x_threshold_percent"] == 0
     assert HIGH_RESOLUTION_BASE_MAP_PATH.is_file()
 
 
