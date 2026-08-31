@@ -374,6 +374,8 @@
 
         const sessionKey = "quake-agent-session-id";
         const userKey = "quake-agent-user-id";
+        const sharedPrompt = new URLSearchParams(window.location.hash.slice(1)).get("q")?.trim() || "";
+        let firstPrompt = sharedPrompt;
 
         function storedUuid(key) {
           let value = sessionStorage.getItem(key);
@@ -387,6 +389,23 @@
         function apiUrl(path) {
           const base = (config.apiBaseUrl || window.location.origin).replace(/\/$/, "");
           return `${base}${path}`;
+        }
+
+        function rememberFirstPrompt(text) {
+          if (firstPrompt) return;
+          firstPrompt = text;
+          const fragment = new URLSearchParams();
+          fragment.set("q", text);
+          const url = new URL(window.location.href);
+          url.hash = fragment.toString();
+          window.history.replaceState(null, "", url);
+        }
+
+        function clearSharedPrompt() {
+          firstPrompt = "";
+          const url = new URL(window.location.href);
+          url.hash = "";
+          window.history.replaceState(null, "", url);
         }
 
         function scrollToBottom() {
@@ -839,6 +858,7 @@
             return;
           }
 
+          rememberFirstPrompt(cleanText);
           const userId = storedUuid(userKey);
           const sessionId = storedUuid(sessionKey);
           addMessage("user", cleanText);
@@ -907,6 +927,7 @@
         newConversation.addEventListener("click", () => {
           sessionStorage.setItem(sessionKey, crypto.randomUUID());
           renderedArtifacts.clear();
+          clearSharedPrompt();
           window.location.reload();
         });
 
@@ -933,7 +954,8 @@
           .then((value) => {
             config = value;
             prompt.maxLength = config.maxPromptCharacters;
-            prompt.focus();
+            if (sharedPrompt) submitPrompt(sharedPrompt);
+            else prompt.focus();
           })
           .catch((error) => {
             addMessage("agent", error.message, "error");

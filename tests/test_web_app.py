@@ -142,6 +142,10 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert "const candidates = examplePromptBank.slice(1);" in page.text
     assert "selected.splice(featuredPosition, 0, featuredPrompt);" in page.text
     assert "renderExamplePrompts();" in page.text
+    assert 'new URLSearchParams(window.location.hash.slice(1)).get("q")' in page.text
+    assert "rememberFirstPrompt(cleanText);" in page.text
+    assert "if (sharedPrompt) submitPrompt(sharedPrompt);" in page.text
+    assert "clearSharedPrompt();" in page.text
     assert '<button class="prompt-chip"' not in page.text
     assert page.headers["cache-control"] == "no-store"
     assert config.json() == {
