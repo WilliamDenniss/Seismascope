@@ -13,6 +13,11 @@ This skill draws events; it does not decide which earthquakes are relevant.
 
 - For a new map, call `render_events_on_world_map` with objects containing
   `coord`, `label`, `latitude_radius`, and `color`.
+- Before rendering a new map, check whether the selected event set is empty. If
+  no events match the user's filters, do not call `render_events_on_world_map`
+  or create map artifacts. Report the zero-result finding and catalog
+  provenance instead. Render an empty base map only when the user explicitly
+  requests one.
 - Infer framing from the requested geographic scope. When a map request names a
   subglobal region—such as the Pacific, Ring of Fire, Alaska, California, Japan,
   or the Mediterranean—set `crop_to_drawn_area=true` unless the user explicitly
