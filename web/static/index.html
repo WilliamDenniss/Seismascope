@@ -4,6 +4,7 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="Explore recent USGS earthquake data and create maps with Quake Agent.">
+    <link rel="icon" href="/favicon.svg" type="image/svg+xml">
     <title>Quake Agent</title>
     <style>
       :root {
@@ -57,13 +58,7 @@
       .mark {
         width: 42px;
         height: 42px;
-        display: grid;
-        place-items: center;
-        border: 1px solid rgba(103, 212, 192, 0.44);
-        border-radius: 14px;
-        background: rgba(29, 104, 98, 0.3);
-        box-shadow: inset 0 0 24px rgba(103, 212, 192, 0.08);
-        font-size: 22px;
+        display: block;
       }
 
       h1 { margin: 0; font-size: 20px; letter-spacing: 0.01em; }
@@ -288,7 +283,7 @@
     <main class="shell">
       <header>
         <div class="brand">
-          <div class="mark" aria-hidden="true">⌁</div>
+          <img class="mark" src="/favicon.svg" alt="">
           <div>
             <h1>Quake Agent</h1>
             <p class="tagline">Explore current USGS earthquake data and build maps</p>

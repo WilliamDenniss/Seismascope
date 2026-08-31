@@ -95,9 +95,16 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     )
     async with _client(app) as client:
         page = await client.get("/")
+        favicon = await client.get("/favicon.svg")
         config = await client.get("/runtime-config.json")
 
     assert page.status_code == 200
+    assert '<link rel="icon" href="/favicon.svg" type="image/svg+xml">' in page.text
+    assert '<img class="mark" src="/favicon.svg" alt="">' in page.text
+    assert favicon.status_code == 200
+    assert favicon.headers["content-type"].startswith("image/svg+xml")
+    assert "Quake Agent" in favicon.text
+    assert "#67d4c0" in favicon.text
     assert "Quake Agent" in page.text
     assert "artifactDelta" in page.text
     assert "inlineData" in page.text

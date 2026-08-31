@@ -29,6 +29,7 @@ load_dotenv(REPO_ROOT / ".env")
 
 AGENT_DIR = REPO_ROOT / "quake_agent"
 INDEX_PATH = Path(__file__).resolve().parent / "static" / "index.html"
+FAVICON_PATH = Path(__file__).resolve().parent / "static" / "favicon.svg"
 APP_NAME = "quake_agent"
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8080
@@ -240,7 +241,12 @@ def create_app() -> FastAPI:
     async def public_surface(request: Request, call_next):
         path = request.url.path
         method = request.method.upper()
-        public_get = path in {"/", "/health", "/runtime-config.json"}
+        public_get = path in {
+            "/",
+            "/favicon.svg",
+            "/health",
+            "/runtime-config.json",
+        }
         artifact_get = method == "GET" and _artifact_request(path)
         if method == "OPTIONS":
             return await call_next(request)
@@ -295,6 +301,10 @@ def create_app() -> FastAPI:
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
         return FileResponse(INDEX_PATH, media_type="text/html")
+
+    @app.get("/favicon.svg", include_in_schema=False)
+    async def favicon() -> FileResponse:
+        return FileResponse(FAVICON_PATH, media_type="image/svg+xml")
 
     @app.get("/runtime-config.json", include_in_schema=False)
     async def runtime_config() -> JSONResponse:

@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title">
+  <title id="title">Quake Agent</title>
+  <rect x="0" y="0" width="64" height="64" rx="19.5" fill="#2e7e75"/>
+  <rect x="3" y="3" width="58" height="58" rx="16.5" fill="#0c1b2d"/>
+  <path d="M9 31h10l4-8 5 2 3 11 4-20h6l6 15h8v6H43l-4-10-4 20h-6l-5-15-1 5H9Z" fill="#67d4c0"/>
+  <circle cx="38" cy="18" r="3.25" fill="#edf5fb"/>
+</svg>
