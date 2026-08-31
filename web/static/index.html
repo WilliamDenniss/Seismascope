@@ -421,7 +421,7 @@
           fragment.set("q", text);
           const url = new URL(window.location.href);
           url.hash = fragment.toString();
-          window.history.replaceState(null, "", url);
+          window.history.pushState(null, "", url);
         }
 
         function clearSharedPrompt() {
@@ -1088,6 +1088,11 @@
         prompt.addEventListener("input", () => {
           prompt.style.height = "auto";
           prompt.style.height = `${Math.min(prompt.scrollHeight, 150)}px`;
+        });
+
+        window.addEventListener("popstate", () => {
+          const historyPrompt = new URLSearchParams(window.location.hash.slice(1)).get("q")?.trim() || "";
+          if (historyPrompt !== firstPrompt) window.location.reload();
         });
 
         renderExamplePrompts();
