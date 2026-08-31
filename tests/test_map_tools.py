@@ -1,19 +1,19 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 from io import BytesIO
 from pathlib import Path
 
 from PIL import Image
 import pytest
 
-from quake_agent.tools.map_tools import BASE_MAP_PATH
-from quake_agent.tools.map_tools import DEFAULT_HIGH_RESOLUTION_CROP_THRESHOLD_PERCENT
-from quake_agent.tools.map_tools import DEFAULT_TWO_X_CROP_THRESHOLD_PERCENT
-from quake_agent.tools.map_tools import HIGH_RESOLUTION_BASE_MAP_PATH
+import quake_agent.tools.map_tools as map_tools
+from quake_agent.tools.map_tools import MAP_SOURCES
+from quake_agent.tools.map_tools import MINIMUM_CROP_LONG_EDGE_PX
 from quake_agent.tools.map_tools import MapEvent
-from quake_agent.tools.map_tools import TWO_X_BASE_MAP_PATH
 from quake_agent.tools.map_tools import WEB_MERCATOR_MAX_LAT
+from quake_agent.tools.map_tools import _select_map_source
 from quake_agent.tools.map_tools import _wrapped_circle_centers
 from quake_agent.tools.map_tools import latitude_radius_to_pixels
 from quake_agent.tools.map_tools import load_current_map_spec
@@ -39,10 +39,41 @@ def test_antimeridian_circle_centers_wrap_both_directions() -> None:
     assert _wrapped_circle_centers(50, 10, 100) == [50]
 
 
+@pytest.mark.parametrize(
+    ("width", "height", "source_index"),
+    [
+        (1400, 100, 0),
+        (700, 100, 1),
+        (350, 100, 2),
+        (349, 100, 2),
+    ],
+)
+def test_map_source_selection_uses_long_edge_boundaries(
+    width: int,
+    height: int,
+    source_index: int,
+) -> None:
+    assert [size for _, size in MAP_SOURCES] == [
+        (2048, 2048),
+        (4096, 4096),
+        (8192, 8192),
+    ]
+    assert _select_map_source({"width": width, "height": height}) == MAP_SOURCES[
+        source_index
+    ]
+
+
+def test_threshold_arguments_are_not_exposed_by_the_renderer() -> None:
+    parameters = inspect.signature(render_events_on_world_map).parameters
+    assert "high_resolution_crop_threshold_percent" not in parameters
+    assert "two_x_crop_threshold_percent" not in parameters
+
+
 async def test_render_saves_versioned_png_and_spec_without_mutating_source(
     artifact_context,
 ) -> None:
-    source_hash = hashlib.sha256(BASE_MAP_PATH.read_bytes()).hexdigest()
+    standard_map_path, _ = MAP_SOURCES[0]
+    source_hash = hashlib.sha256(standard_map_path.read_bytes()).hexdigest()
     events = [
         MapEvent(
             coord=[-122.3, 37.8],
@@ -74,7 +105,7 @@ async def test_render_saves_versioned_png_and_spec_without_mutating_source(
     assert first["spec_artifact_version"] == 0
     assert second["map_artifact_version"] == 1
     assert second["spec_artifact_version"] == 1
-    assert hashlib.sha256(BASE_MAP_PATH.read_bytes()).hexdigest() == source_hash
+    assert hashlib.sha256(standard_map_path.read_bytes()).hexdigest() == source_hash
 
     map_part = await artifact_context.load_artifact("earthquake-map.png", version=1)
     assert map_part.inline_data is not None
@@ -139,14 +170,12 @@ async def test_crop_to_drawn_area_records_dimensions_bounds_and_padding(
     assert rendered["crop"]["applied"] is True
     assert rendered["crop"]["padding_px"] == 12
     assert rendered["crop"]["source_padding_px"] == 48
-    assert rendered["crop"]["used_high_resolution_source"] is True
-    assert (
-        rendered["crop"]["area_percent_of_world"]
-        < DEFAULT_HIGH_RESOLUTION_CROP_THRESHOLD_PERCENT
-    )
+    assert rendered["crop"]["minimum_long_edge_px"] == 1400
+    assert rendered["crop"]["minimum_long_edge_satisfied"] is False
     assert rendered["source_map"] == "static/world_map_4x.png"
     assert rendered["width"] < 400
     assert rendered["height"] < 400
+    assert any("1400-pixel target" in warning for warning in rendered["warnings"])
     assert rendered["bounds"]["west"] < 0 < rendered["bounds"]["east"]
     assert rendered["bounds"]["south"] < 0 < rendered["bounds"]["north"]
 
@@ -159,6 +188,10 @@ async def test_crop_to_drawn_area_records_dimensions_bounds_and_padding(
     assert loaded["spec"]["source"]["width"] == 8192
     assert loaded["spec"]["source"]["height"] == 8192
     assert loaded["spec"]["source"]["artifact"] == "static/world_map_4x.png"
+    assert loaded["spec"]["source"]["scale"] == 4
+    assert "area_percent_of_world" not in loaded["spec"]["crop"]
+    assert "high_resolution_threshold_percent" not in loaded["spec"]["crop"]
+    assert "two_x_threshold_percent" not in loaded["spec"]["crop"]
     assert loaded["spec"]["crop"] == rendered["crop"]
 
 
@@ -180,17 +213,17 @@ async def test_crop_stitches_antimeridian_into_compact_output(artifact_context) 
     assert rendered["status"] == "ok"
     assert rendered["width"] < 600
     assert rendered["crop"]["wraps_antimeridian"] is True
-    assert rendered["crop"]["used_high_resolution_source"] is True
+    assert rendered["source_map"] == "static/world_map_4x.png"
     assert rendered["bounds"]["west"] > rendered["bounds"]["east"]
 
 
-async def test_medium_crop_uses_two_x_map_and_its_own_threshold(
+async def test_crop_uses_two_x_map_when_it_reaches_minimum_long_edge(
     artifact_context,
 ) -> None:
     event = MapEvent(
         coord=[0, 0],
         label="",
-        latitude_radius=40,
+        latitude_radius=50,
         color="#00aa00",
     )
     rendered = await render_events_on_world_map(
@@ -198,31 +231,51 @@ async def test_medium_crop_uses_two_x_map_and_its_own_threshold(
         crop_to_drawn_area=True,
         tool_context=artifact_context,
     )
-    standard = await render_events_on_world_map(
-        [event],
-        artifact_name="standard.png",
+
+    assert rendered["status"] == "ok"
+    assert rendered["source_map"] == "static/world_map_2x.png"
+    assert rendered["crop"]["source_padding_px"] == 64
+    assert max(rendered["width"], rendered["height"]) >= 1400
+    assert rendered["crop"]["minimum_long_edge_satisfied"] is True
+
+
+async def test_crop_uses_four_x_map_when_two_x_is_still_too_small(
+    artifact_context,
+) -> None:
+    rendered = await render_events_on_world_map(
+        [
+            MapEvent(
+                coord=[0, 0],
+                label="",
+                latitude_radius=35,
+                color="#00aa00",
+            )
+        ],
         crop_to_drawn_area=True,
-        two_x_crop_threshold_percent=0,
         tool_context=artifact_context,
     )
 
     assert rendered["status"] == "ok"
-    assert (
-        DEFAULT_HIGH_RESOLUTION_CROP_THRESHOLD_PERCENT
-        <= rendered["crop"]["area_percent_of_world"]
-        < DEFAULT_TWO_X_CROP_THRESHOLD_PERCENT
-    )
-    assert rendered["source_map"] == "static/world_map_2x.png"
-    assert rendered["crop"]["source_padding_px"] == 64
-    assert rendered["crop"]["two_x_threshold_percent"] == 25
-    assert standard["status"] == "ok"
-    assert standard["source_map"] == "static/world_map.png"
-    assert TWO_X_BASE_MAP_PATH.is_file()
+    assert rendered["source_map"] == "static/world_map_4x.png"
+    assert max(rendered["width"], rendered["height"]) >= 1400
+    assert rendered["crop"]["minimum_long_edge_satisfied"] is True
 
 
-async def test_zero_threshold_keeps_standard_map_for_small_crop(
+async def test_349_pixel_crop_uses_four_x_map_and_warns_target_is_unmet(
     artifact_context,
+    monkeypatch,
 ) -> None:
+    monkeypatch.setattr(
+        map_tools,
+        "_content_crop",
+        lambda _overlay, _padding: {
+            "source_x": 850,
+            "source_y": 974,
+            "width": 349,
+            "height": 100,
+            "wraps_antimeridian": False,
+        },
+    )
     rendered = await render_events_on_world_map(
         [
             MapEvent(
@@ -233,17 +286,39 @@ async def test_zero_threshold_keeps_standard_map_for_small_crop(
             )
         ],
         crop_to_drawn_area=True,
-        high_resolution_crop_threshold_percent=0,
-        two_x_crop_threshold_percent=0,
+        tool_context=artifact_context,
+    )
+
+    assert rendered["status"] == "ok"
+    assert rendered["source_map"] == "static/world_map_4x.png"
+    assert (rendered["width"], rendered["height"]) == (1396, 400)
+    assert rendered["crop"]["minimum_long_edge_satisfied"] is False
+    assert any("1400-pixel target" in warning for warning in rendered["warnings"])
+
+
+async def test_non_square_crop_uses_standard_map_when_long_edge_meets_minimum(
+    artifact_context,
+) -> None:
+    rendered = await render_events_on_world_map(
+        [
+            MapEvent(
+                coord=[longitude, 0],
+                label="",
+                latitude_radius=2,
+                color="#00aa00",
+            )
+            for longitude in (-120, 0, 120)
+        ],
+        crop_to_drawn_area=True,
         tool_context=artifact_context,
     )
 
     assert rendered["status"] == "ok"
     assert rendered["source_map"] == "static/world_map.png"
-    assert rendered["crop"]["used_high_resolution_source"] is False
-    assert rendered["crop"]["high_resolution_threshold_percent"] == 0
-    assert rendered["crop"]["two_x_threshold_percent"] == 0
-    assert HIGH_RESOLUTION_BASE_MAP_PATH.is_file()
+    assert rendered["width"] >= MINIMUM_CROP_LONG_EDGE_PX
+    assert rendered["height"] < MINIMUM_CROP_LONG_EDGE_PX
+    assert rendered["crop"]["minimum_long_edge_satisfied"] is True
+    assert not any("largest available" in warning for warning in rendered["warnings"])
 
 
 async def test_crop_with_no_drawable_content_keeps_full_map(artifact_context) -> None:

@@ -29,14 +29,13 @@ and left edges and reports crossing bounds with `west > east`. The saved map
 spec records the original map dimensions, output dimensions, visible bounds,
 crop rectangle, padding, and whether antimeridian stitching was used.
 
-The renderer measures the padded crop area as a percentage of the full map. It
-uses `static/world_map_4x.png` strictly below
-`high_resolution_crop_threshold_percent` (default 6.25%), then
-`static/world_map_2x.png` strictly below `two_x_crop_threshold_percent` (default
-25%), and otherwise uses `static/world_map.png`. The 4x tier is evaluated first.
-Set either threshold to 0 to disable that tier. `crop_padding_px` is expressed
-in standard-map pixels and is scaled for the selected source; the saved spec
-records both thresholds, both padding values, and the selected source map.
+For a requested crop, the renderer considers the 2048, 4096, and 8192 pixel
+sources in that order and selects the first whose cropped output has a long edge
+of at least 1400 pixels. If even the 8192 pixel source cannot meet the target,
+the renderer preserves the requested crop, uses that largest source, and emits
+a warning. `crop_padding_px` is expressed in standard-map pixels and is scaled
+for the selected source; the saved spec records both padding values, the target
+and whether it was met, and the selected source map.
 
 The circle is a screen-space circle whose pixel radius comes from the projected
 north/south latitude span. It is not a geodesic circle on Earth's surface.

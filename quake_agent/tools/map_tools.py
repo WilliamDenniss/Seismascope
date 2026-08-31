@@ -20,18 +20,14 @@ from pydantic import Field
 
 
 WEB_MERCATOR_MAX_LAT = 85.05112878
-EXPECTED_MAP_SIZE = (2048, 2048)
-BASE_MAP_PATH = Path(__file__).resolve().parents[2] / "static" / "world_map.png"
-TWO_X_MAP_SIZE = (4096, 4096)
-TWO_X_BASE_MAP_PATH = (
-    Path(__file__).resolve().parents[2] / "static" / "world_map_2x.png"
-)
-HIGH_RESOLUTION_MAP_SIZE = (8192, 8192)
-HIGH_RESOLUTION_BASE_MAP_PATH = (
-    Path(__file__).resolve().parents[2] / "static" / "world_map_4x.png"
-)
-DEFAULT_TWO_X_CROP_THRESHOLD_PERCENT = 25.0
-DEFAULT_HIGH_RESOLUTION_CROP_THRESHOLD_PERCENT = 6.25
+_STATIC_MAP_DIR = Path(__file__).resolve().parents[2] / "static"
+MapSource = tuple[Path, tuple[int, int]]
+MAP_SOURCES: list[MapSource] = [
+    (_STATIC_MAP_DIR / "world_map.png", (2048, 2048)),
+    (_STATIC_MAP_DIR / "world_map_2x.png", (4096, 4096)),
+    (_STATIC_MAP_DIR / "world_map_4x.png", (8192, 8192)),
+]
+MINIMUM_CROP_LONG_EDGE_PX = 1400
 DEFAULT_MAP_ARTIFACT = "earthquake-map.png"
 DEFAULT_CROP_PADDING_PX = 32
 MAX_CROP_PADDING_PX = 1024
@@ -256,17 +252,24 @@ def _visible_bounds(
     }
 
 
-def _crop_area_percent(
-    crop: dict[str, int | bool],
-    source_width: int,
-    source_height: int,
-) -> float:
-    return (
-        int(crop["width"])
-        * int(crop["height"])
-        / (source_width * source_height)
-        * 100
-    )
+def _map_source_scale(source: MapSource) -> int:
+    _, (standard_width, standard_height) = MAP_SOURCES[0]
+    _, (source_width, source_height) = source
+    width_scale, width_remainder = divmod(source_width, standard_width)
+    height_scale, height_remainder = divmod(source_height, standard_height)
+    if width_remainder or height_remainder or width_scale != height_scale:
+        raise ValueError(
+            "Map source dimensions must scale uniformly from the standard map."
+        )
+    return width_scale
+
+
+def _select_map_source(crop: dict[str, int | bool]) -> MapSource:
+    crop_long_edge = max(int(crop["width"]), int(crop["height"]))
+    for source in MAP_SOURCES:
+        if crop_long_edge * _map_source_scale(source) >= MINIMUM_CROP_LONG_EDGE_PX:
+            return source
+    return MAP_SOURCES[-1]
 
 
 def _scaled_crop(
@@ -305,21 +308,21 @@ def _render_scaled_crop(
     prepared: list[dict[str, Any]],
     placed_labels: list[dict[str, Any]],
     standard_crop: dict[str, int | bool],
-    source_path: Path,
-    source_size: tuple[int, int],
+    source: MapSource,
 ) -> tuple[Image.Image, dict[str, int | bool]]:
-    scale = source_size[0] // EXPECTED_MAP_SIZE[0]
+    source_path, source_size = source
+    scale = _map_source_scale(source)
     scaled_crop = _scaled_crop(standard_crop, scale)
     if not source_path.is_file():
         raise FileNotFoundError(f"Scaled base map not found at {source_path}.")
-    with Image.open(source_path) as source:
-        if source.size != source_size:
+    with Image.open(source_path) as source_image:
+        if source_image.size != source_size:
             raise ValueError(
                 "Scaled base map must be "
                 f"{source_size[0]}x{source_size[1]}, "
-                f"not {source.width}x{source.height}."
+                f"not {source_image.width}x{source_image.height}."
             )
-        rendered = _crop_wrapped_image(source, scaled_crop).convert("RGB")
+        rendered = _crop_wrapped_image(source_image, scaled_crop).convert("RGB")
 
     crop_x = int(scaled_crop["source_x"])
     crop_y = int(scaled_crop["source_y"])
@@ -374,17 +377,14 @@ def _render_map(
     events: list[MapEvent],
     crop_to_drawn_area: bool = False,
     crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
-    high_resolution_crop_threshold_percent: float = (
-        DEFAULT_HIGH_RESOLUTION_CROP_THRESHOLD_PERCENT
-    ),
-    two_x_crop_threshold_percent: float = DEFAULT_TWO_X_CROP_THRESHOLD_PERCENT,
 ) -> tuple[bytes, dict[str, Any], list[str], int]:
-    if not BASE_MAP_PATH.is_file():
-        raise FileNotFoundError(f"Base map not found at {BASE_MAP_PATH}.")
-    with Image.open(BASE_MAP_PATH) as source:
-        if source.size != EXPECTED_MAP_SIZE:
+    standard_path, standard_size = MAP_SOURCES[0]
+    if not standard_path.is_file():
+        raise FileNotFoundError(f"Base map not found at {standard_path}.")
+    with Image.open(standard_path) as source:
+        if source.size != standard_size:
             raise ValueError(
-                f"Base map must be {EXPECTED_MAP_SIZE[0]}x{EXPECTED_MAP_SIZE[1]}, "
+                f"Base map must be {standard_size[0]}x{standard_size[1]}, "
                 f"not {source.width}x{source.height}."
             )
         image = source.convert("RGBA")
@@ -537,30 +537,31 @@ def _render_map(
             if crop_applied:
                 rendered = _crop_wrapped_image(rendered, crop)
 
-    crop_area_percent = _crop_area_percent(crop, width, height)
-    source_path = BASE_MAP_PATH
-    source_size = EXPECTED_MAP_SIZE
+    selected_source = MAP_SOURCES[0]
+    if crop_applied:
+        selected_source = _select_map_source(crop)
+    source_path, source_size = selected_source
+    source_scale = _map_source_scale(selected_source)
     source_padding_px = crop_padding_px
-    if (
-        crop_applied
-        and crop_area_percent < high_resolution_crop_threshold_percent
-    ):
-        source_path = HIGH_RESOLUTION_BASE_MAP_PATH
-        source_size = HIGH_RESOLUTION_MAP_SIZE
-    elif crop_applied and crop_area_percent < two_x_crop_threshold_percent:
-        source_path = TWO_X_BASE_MAP_PATH
-        source_size = TWO_X_MAP_SIZE
-
-    if source_path != BASE_MAP_PATH:
+    if selected_source != MAP_SOURCES[0]:
         rendered, crop = _render_scaled_crop(
             prepared,
             placed_labels,
             crop,
-            source_path,
-            source_size,
+            selected_source,
         )
         width, height = source_size
-        source_padding_px = crop_padding_px * (width // EXPECTED_MAP_SIZE[0])
+        source_padding_px = crop_padding_px * source_scale
+
+    minimum_long_edge_satisfied = (
+        max(rendered.width, rendered.height) >= MINIMUM_CROP_LONG_EDGE_PX
+    )
+    if crop_applied and not minimum_long_edge_satisfied:
+        warnings.append(
+            f"Crop long edge is {max(rendered.width, rendered.height)} pixels at "
+            "the largest available map source, below the "
+            f"{MINIMUM_CROP_LONG_EDGE_PX}-pixel target."
+        )
 
     output = BytesIO()
     rendered.save(output, format="PNG", optimize=True)
@@ -577,19 +578,15 @@ def _render_map(
                 "north": WEB_MERCATOR_MAX_LAT,
                 "south": -WEB_MERCATOR_MAX_LAT,
             },
-            "scale": width // EXPECTED_MAP_SIZE[0],
+            "scale": source_scale,
         },
         "crop": {
             "requested": crop_to_drawn_area,
             "applied": crop_applied,
             "padding_px": crop_padding_px,
             "source_padding_px": source_padding_px,
-            "area_percent_of_world": crop_area_percent,
-            "high_resolution_threshold_percent": (
-                high_resolution_crop_threshold_percent
-            ),
-            "two_x_threshold_percent": two_x_crop_threshold_percent,
-            "used_high_resolution_source": source_path != BASE_MAP_PATH,
+            "minimum_long_edge_px": MINIMUM_CROP_LONG_EDGE_PX,
+            "minimum_long_edge_satisfied": minimum_long_edge_satisfied,
             **crop,
         },
         "width": rendered.width,
@@ -612,10 +609,6 @@ async def render_events_on_world_map(
     artifact_name: str = DEFAULT_MAP_ARTIFACT,
     crop_to_drawn_area: bool = False,
     crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
-    high_resolution_crop_threshold_percent: float = (
-        DEFAULT_HIGH_RESOLUTION_CROP_THRESHOLD_PERCENT
-    ),
-    two_x_crop_threshold_percent: float = DEFAULT_TWO_X_CROP_THRESHOLD_PERCENT,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """Render supplied event circles onto the immutable canonical world map.
@@ -625,12 +618,10 @@ async def render_events_on_world_map(
             degrees, and a Pillow-compatible color.
         artifact_name: Relative session-scoped PNG artifact name.
         crop_to_drawn_area: Crop the output to the smallest area containing all
-            rendered circles and labels. The full-world map remains the default.
+            rendered circles and labels. Crops automatically use the first map
+            source whose output long edge reaches 1400 pixels, when available.
+            The full-world map remains the default.
         crop_padding_px: Context to retain around drawn content when cropping.
-        high_resolution_crop_threshold_percent: Use the 4x base map when a
-            requested crop occupies less than this percentage of the world.
-        two_x_crop_threshold_percent: Use the 2x base map when a requested crop
-            is not eligible for 4x and occupies less than this percentage.
 
     Returns:
         Versioned PNG and map-spec artifact handles, dimensions, counts, and
@@ -650,32 +641,6 @@ async def render_events_on_world_map(
                 f"{MAX_CROP_PADDING_PX}."
             ),
         }
-    if (
-        isinstance(two_x_crop_threshold_percent, bool)
-        or not isinstance(two_x_crop_threshold_percent, (int, float))
-        or not math.isfinite(two_x_crop_threshold_percent)
-        or not 0 <= two_x_crop_threshold_percent <= 100
-    ):
-        return {
-            "status": "error",
-            "error": (
-                "two_x_crop_threshold_percent must be a finite number from "
-                "0 through 100."
-            ),
-        }
-    if (
-        isinstance(high_resolution_crop_threshold_percent, bool)
-        or not isinstance(high_resolution_crop_threshold_percent, (int, float))
-        or not math.isfinite(high_resolution_crop_threshold_percent)
-        or not 0 <= high_resolution_crop_threshold_percent <= 100
-    ):
-        return {
-            "status": "error",
-            "error": (
-                "high_resolution_crop_threshold_percent must be a finite "
-                "number from 0 through 100."
-            ),
-        }
     names = _artifact_names(artifact_name)
     if names is None:
         return {
@@ -688,10 +653,6 @@ async def render_events_on_world_map(
             events,
             crop_to_drawn_area=crop_to_drawn_area,
             crop_padding_px=crop_padding_px,
-            high_resolution_crop_threshold_percent=(
-                high_resolution_crop_threshold_percent
-            ),
-            two_x_crop_threshold_percent=two_x_crop_threshold_percent,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         return {"status": "error", "error": str(exc)}
