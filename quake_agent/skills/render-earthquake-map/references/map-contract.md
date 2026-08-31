@@ -17,6 +17,14 @@ Each event has this shape:
 }
 ```
 
+Catalog-scale maps use the same projection and marker renderer but store an
+`event_source` reference to the exact USGS catalog artifact and deterministic
+magnitude styling instead of copying every marker into the map specification.
+This keeps both the model tool call and later specification loads bounded. The
+renderer colors magnitude bands blue, green, yellow, orange, and red; uses gray
+when magnitude is unavailable; scales circle radius by magnitude; and labels
+only magnitude 6+ events.
+
 Colors may be Pillow-compatible names, hex values, or RGBA values. Circles are
 translucent with opaque outlines. Smaller circles are drawn first so larger
 circles appear on top; circles wrap across the antimeridian, and labels use

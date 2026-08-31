@@ -16,8 +16,10 @@ Use `hourly` for the most recent activity and `monthly` only when the user needs
    freshness policy unless the user explicitly requests a refresh.
 2. Check `status`, `cached`, and `stale`. If stale data is returned, disclose its
    fetch time and the refresh error.
-3. Call `query_usgs_feed` to obtain only the bounded subset needed for the task.
-   Never put the complete monthly catalog into model context.
+3. Call `query_usgs_feed` to obtain only the bounded subset needed for analysis
+   or a small selected-event map. Never put the complete monthly catalog into
+   model context. When the user wants the whole feed mapped, skip the query and
+   give the compact feed artifact handle to `render_usgs_feed_on_world_map`.
 4. Preserve the artifact name and version when describing or mapping results.
 
 All times are UTC. Treat the monthly feed as a 30-day comparison window, not a
@@ -25,4 +27,3 @@ historical baseline. Do not make predictions or hazard claims.
 
 Read [references/usgs-geojson.md](references/usgs-geojson.md) only when USGS
 field semantics or feed limitations matter to the response.
-

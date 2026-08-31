@@ -3,9 +3,11 @@ from __future__ import annotations
 import hashlib
 import inspect
 from io import BytesIO
+import json
 from pathlib import Path
 
 from google.adk.tools import FunctionTool
+from google.genai import types
 from PIL import Image
 from PIL import ImageDraw
 import pytest
@@ -24,6 +26,7 @@ from quake_agent.tools.map_tools import latitude_radius_to_pixels
 from quake_agent.tools.map_tools import load_current_map_spec
 from quake_agent.tools.map_tools import project_web_mercator
 from quake_agent.tools.map_tools import render_events_on_world_map
+from quake_agent.tools.map_tools import render_usgs_feed_on_world_map
 from conftest import ArtifactContext
 
 
@@ -83,6 +86,93 @@ def test_renderer_schema_exposes_optional_agent_defined_legend() -> None:
     assert schema["properties"]["legend"]["default"] is None
     assert schema["$defs"]["MapLegend"]["required"] == ["items"]
     assert schema["$defs"]["MapLegendItem"]["required"] == ["label", "color"]
+
+
+def test_catalog_renderer_schema_never_accepts_model_supplied_events() -> None:
+    declaration = FunctionTool(render_usgs_feed_on_world_map)._get_declaration()
+    schema = declaration.parameters_json_schema
+
+    assert schema is not None
+    assert "feed" in schema["properties"]
+    assert "artifact_version" in schema["properties"]
+    assert "events" not in schema["properties"]
+    assert "legend" not in schema["properties"]
+
+
+async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(
+    artifact_context,
+) -> None:
+    event_count = 10_000
+    generated = 1_786_000_000_000
+    catalog = {
+        "type": "FeatureCollection",
+        "metadata": {"generated": generated, "count": event_count},
+        "features": [
+            {
+                "type": "Feature",
+                "id": f"event-{index}",
+                "properties": {
+                    "mag": (index % 60) / 10,
+                    "place": f"Synthetic event {index}",
+                    "time": generated - index * 1000,
+                },
+                "geometry": {
+                    "type": "Point",
+                    "coordinates": [
+                        -179.75 + (index % 720) * 0.5,
+                        -70 + (index % 281) * 0.5,
+                        10,
+                    ],
+                },
+            }
+            for index in range(event_count)
+        ],
+    }
+    catalog_version = await artifact_context.save_artifact(
+        "usgs-monthly.geojson",
+        types.Part.from_bytes(
+            data=json.dumps(catalog).encode("utf-8"),
+            mime_type="application/geo+json",
+        ),
+    )
+    artifact_context.state["catalog_monthly_version"] = catalog_version
+
+    rendered = await render_usgs_feed_on_world_map(
+        "monthly",
+        artifact_version=catalog_version,
+        tool_context=artifact_context,
+    )
+
+    assert rendered["status"] == "ok"
+    assert rendered["total_catalog_events"] == event_count
+    assert rendered["total_matched"] == event_count
+    assert rendered["rendered_count"] == event_count
+    assert rendered["skipped_count"] == 0
+
+    map_part = await artifact_context.load_artifact(
+        rendered["map_artifact_name"],
+        version=rendered["map_artifact_version"],
+    )
+    assert map_part.inline_data is not None
+    with Image.open(BytesIO(bytes(map_part.inline_data.data))) as image:
+        assert image.size == (2048, 2048)
+
+    spec_part = await artifact_context.load_artifact(
+        rendered["spec_artifact_name"],
+        version=rendered["spec_artifact_version"],
+    )
+    assert spec_part.inline_data is not None
+    spec_bytes = bytes(spec_part.inline_data.data)
+    spec = json.loads(spec_bytes)
+    assert len(spec_bytes) < 20_000
+    assert spec["event_count"] == event_count
+    assert spec["events"] == []
+    assert spec["event_source"]["catalog_artifact_version"] == catalog_version
+    assert spec["event_source"]["style"] == {
+        "color": "magnitude_bins",
+        "labels": "magnitude >= 6",
+        "radius": "magnitude_scaled",
+    }
 
 
 def test_legend_corner_selection_avoids_content_and_breaks_ties_bottom_right() -> None:

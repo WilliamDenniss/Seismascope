@@ -18,6 +18,17 @@ from PIL import ImageFont
 from pydantic import BaseModel
 from pydantic import Field
 
+from .data_tools import ARTIFACT_NAMES
+from .data_tools import USGS_FEED_URLS
+from .data_tools import FeedDownloadError
+from .data_tools import FeedName
+from .data_tools import GeoBounds
+from .data_tools import _epoch_ms_to_utc
+from .data_tools import _load_catalog
+from .data_tools import _parse_utc
+from .data_tools import _select_catalog_events
+from .data_tools import _state_prefix
+
 
 WEB_MERCATOR_MAX_LAT = 85.05112878
 _STATIC_MAP_DIR = Path(__file__).resolve().parents[2] / "static"
@@ -68,6 +79,20 @@ class MapLegend(BaseModel):
 
     title: str | None = None
     items: list[MapLegendItem]
+
+
+DENSE_MAP_LABEL_MIN_MAGNITUDE = 6.0
+DENSE_MAP_MAGNITUDE_LEGEND = MapLegend(
+    title="Magnitude",
+    items=[
+        MapLegendItem(label="Below 1.0", color="#3b82f6"),
+        MapLegendItem(label="1.0-1.9", color="#22c55e"),
+        MapLegendItem(label="2.0-2.9", color="#eab308"),
+        MapLegendItem(label="3.0-3.9", color="#f97316"),
+        MapLegendItem(label="4.0+", color="#dc2626"),
+        MapLegendItem(label="Unknown", color="#6b7280"),
+    ],
+)
 
 
 def _normalize_longitude(longitude: float) -> tuple[float, bool]:
@@ -145,6 +170,35 @@ def _marker_colors(
         (rgba[0], rgba[1], rgba[2], fill_alpha),
         (rgba[0], rgba[1], rgba[2], 255),
     )
+
+
+def _dense_event_color(magnitude: float | None) -> str:
+    if magnitude is None:
+        return "#6b7280"
+    if magnitude < 1:
+        return "#3b82f6"
+    if magnitude < 2:
+        return "#22c55e"
+    if magnitude < 3:
+        return "#eab308"
+    if magnitude < 4:
+        return "#f97316"
+    return "#dc2626"
+
+
+def _dense_event_radius(magnitude: float | None) -> float:
+    """Return a bounded angular marker radius that grows with magnitude."""
+    if magnitude is None:
+        return 0.1
+    return max(0.1, min(1.0, 0.1 * 2 ** (magnitude / 2)))
+
+
+def _dense_event_label(event: dict[str, Any]) -> str:
+    magnitude = event["magnitude"]
+    if magnitude is None or magnitude < DENSE_MAP_LABEL_MIN_MAGNITUDE:
+        return ""
+    place = event["place"] or "Location unavailable"
+    return f"M{magnitude:.1f} {place}"
 
 
 def _prepare_legend(legend: MapLegend | None) -> dict[str, Any] | None:
@@ -917,6 +971,210 @@ def _render_map(
         ],
     }
     return output.getvalue(), spec, warnings, skipped
+
+
+async def render_usgs_feed_on_world_map(
+    feed: FeedName,
+    artifact_version: int | None = None,
+    min_magnitude: float | None = None,
+    bounds: GeoBounds | None = None,
+    start_time: str | None = None,
+    end_time: str | None = None,
+    artifact_name: str = DEFAULT_MAP_ARTIFACT,
+    crop_to_drawn_area: bool = False,
+    crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
+    tool_context: ToolContext | None = None,
+) -> dict[str, Any]:
+    """Render a stored USGS catalog without putting its events in model context.
+
+    Args:
+        feed: The stored "hourly" or "monthly" catalog.
+        artifact_version: Exact catalog artifact version; omit for the active one.
+        min_magnitude: Optional inclusive minimum magnitude.
+        bounds: Optional geographic bounds. West greater than east crosses the
+            antimeridian.
+        start_time: Optional inclusive ISO-8601 UTC lower bound.
+        end_time: Optional inclusive ISO-8601 UTC upper bound.
+        artifact_name: Relative session-scoped PNG artifact name.
+        crop_to_drawn_area: Crop to the filtered events instead of keeping the
+            full-world view.
+        crop_padding_px: Context to retain around drawn content when cropping.
+
+    Returns:
+        Compact catalog provenance and versioned map artifact handles. Event
+        coordinates stay inside the tool and are never returned to the model.
+    """
+    if tool_context is None:
+        return {"status": "error", "error": "Tool context is unavailable."}
+    if feed not in ARTIFACT_NAMES:
+        return {"status": "error", "error": f"Unsupported feed: {feed!r}."}
+    if (
+        isinstance(crop_padding_px, bool)
+        or not isinstance(crop_padding_px, int)
+        or not 0 <= crop_padding_px <= MAX_CROP_PADDING_PX
+    ):
+        return {
+            "status": "error",
+            "error": (
+                f"crop_padding_px must be an integer from 0 through "
+                f"{MAX_CROP_PADDING_PX}."
+            ),
+        }
+    names = _artifact_names(artifact_name)
+    if names is None:
+        return {
+            "status": "error",
+            "error": "artifact_name must be a safe relative .png path.",
+        }
+    if bounds is not None and bounds.south > bounds.north:
+        return {"status": "error", "error": "bounds.south must not exceed north."}
+
+    start = _parse_utc(start_time)
+    end = _parse_utc(end_time)
+    if start_time and start is None:
+        return {"status": "error", "error": "start_time is not valid ISO-8601."}
+    if end_time and end is None:
+        return {"status": "error", "error": "end_time is not valid ISO-8601."}
+    if start and end and start > end:
+        return {"status": "error", "error": "start_time must not exceed end_time."}
+
+    prefix = _state_prefix(feed)
+    selected_version = artifact_version
+    if selected_version is None:
+        state_version = tool_context.state.get(f"{prefix}_version")
+        selected_version = state_version if isinstance(state_version, int) else None
+    if selected_version is None:
+        return {
+            "status": "error",
+            "error": f"No stored {feed} catalog. Call download_usgs_feed first.",
+        }
+
+    try:
+        loaded = await _load_catalog(
+            tool_context,
+            artifact_name=ARTIFACT_NAMES[feed],
+            version=selected_version,
+        )
+    except (FeedDownloadError, OSError, ValueError) as exc:
+        return {"status": "error", "error": str(exc)}
+    if not loaded:
+        return {
+            "status": "error",
+            "error": f"Artifact version {selected_version} was not found.",
+        }
+    catalog, _ = loaded
+    selected, skipped_invalid, duplicates = _select_catalog_events(
+        catalog,
+        min_magnitude=min_magnitude,
+        bounds=bounds,
+        start=start,
+        end=end,
+        sort="time_desc",
+    )
+    metadata = catalog.get("metadata", {})
+    provenance = {
+        "feed": feed,
+        "source_url": USGS_FEED_URLS[feed],
+        "catalog_artifact_name": ARTIFACT_NAMES[feed],
+        "catalog_artifact_version": selected_version,
+        "source_generated_at": _epoch_ms_to_utc(metadata.get("generated")),
+        "total_catalog_events": len(catalog["features"]),
+        "total_matched": len(selected),
+        "skipped_invalid": skipped_invalid,
+        "deduplicated_count": duplicates,
+    }
+    if not selected:
+        return {"status": "empty", **provenance}
+
+    map_events = [
+        MapEvent(
+            coord=event["coord"],
+            label=_dense_event_label(event),
+            latitude_radius=_dense_event_radius(event["magnitude"]),
+            color=_dense_event_color(event["magnitude"]),
+        )
+        for event in selected
+    ]
+    try:
+        image_bytes, spec, warnings, render_skipped = _render_map(
+            map_events,
+            crop_to_drawn_area=crop_to_drawn_area,
+            crop_padding_px=crop_padding_px,
+            legend=DENSE_MAP_MAGNITUDE_LEGEND,
+        )
+    except (FileNotFoundError, OSError, ValueError) as exc:
+        return {"status": "error", "error": str(exc), **provenance}
+
+    rendered_count = len(spec["events"])
+    spec["event_count"] = rendered_count
+    spec["event_source"] = {
+        "kind": "usgs_catalog_artifact",
+        **provenance,
+        "filters": {
+            "min_magnitude": min_magnitude,
+            "bounds": bounds.model_dump() if bounds is not None else None,
+            "start_time": start_time,
+            "end_time": end_time,
+        },
+        "style": {
+            "color": "magnitude_bins",
+            "radius": "magnitude_scaled",
+            "labels": f"magnitude >= {DENSE_MAP_LABEL_MIN_MAGNITUDE:g}",
+        },
+    }
+    # The catalog artifact plus the deterministic style above is the source of
+    # truth. Avoid duplicating thousands of markers in the map spec, where a
+    # later load could put the full catalog back into model context.
+    spec["events"] = []
+
+    image_name, spec_name = names
+    spec_bytes = json.dumps(spec, indent=2, sort_keys=True).encode("utf-8")
+    try:
+        image_version = await tool_context.save_artifact(
+            image_name,
+            types.Part.from_bytes(data=image_bytes, mime_type="image/png"),
+            custom_metadata={
+                "projection": "web_mercator",
+                "event_count": rendered_count,
+                "cropped": spec["crop"]["applied"],
+                "legend_item_count": len(spec["legend"]["items"]),
+                "catalog_artifact": ARTIFACT_NAMES[feed],
+                "catalog_version": selected_version,
+            },
+        )
+        spec_version = await tool_context.save_artifact(
+            spec_name,
+            types.Part.from_bytes(data=spec_bytes, mime_type="application/json"),
+            custom_metadata={"map_artifact": image_name, "map_version": image_version},
+        )
+    except (OSError, ValueError) as exc:
+        return {
+            "status": "error",
+            "error": f"Map was rendered but artifacts could not be saved: {exc}",
+            **provenance,
+        }
+
+    tool_context.state["current_map_artifact"] = image_name
+    tool_context.state["current_map_version"] = image_version
+    tool_context.state["current_map_spec_artifact"] = spec_name
+    tool_context.state["current_map_spec_version"] = spec_version
+    return {
+        "status": "ok",
+        **provenance,
+        "map_artifact_name": image_name,
+        "map_artifact_version": image_version,
+        "spec_artifact_name": spec_name,
+        "spec_artifact_version": spec_version,
+        "width": spec["width"],
+        "height": spec["height"],
+        "crop": spec["crop"],
+        "bounds": spec["bounds"],
+        "source_map": spec["source"]["artifact"],
+        "legend": spec["legend"],
+        "rendered_count": rendered_count,
+        "skipped_count": render_skipped,
+        "warnings": warnings,
+    }
 
 
 async def render_events_on_world_map(

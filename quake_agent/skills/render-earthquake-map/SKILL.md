@@ -1,8 +1,9 @@
 ---
 name: render-earthquake-map
-description: Render a supplied set of labeled event circles on the canonical world-map PNG, or revise the latest saved map specification. Use only after the relevant events have been selected.
+description: Render a stored USGS feed or a supplied set of event circles on the canonical world-map PNG, or revise the latest saved map specification. Use after the source catalog or relevant events have been selected.
 metadata:
   adk_additional_tools:
+    - render_usgs_feed_on_world_map
     - render_events_on_world_map
     - load_current_map_spec
 ---
@@ -11,8 +12,18 @@ metadata:
 
 This skill draws events; it does not decide which earthquakes are relevant.
 
+- For a whole stored feed or a catalog-scale result, call
+  `render_usgs_feed_on_world_map` with the feed and exact artifact version from
+  `download_usgs_feed`. Do not query, copy, or serialize the event array. This
+  artifact-backed path loads and renders every matching event inside the tool,
+  so its function call stays small even for the monthly catalog.
+- The catalog-backed renderer applies deterministic magnitude colors and marker
+  sizes, labels only magnitude 6+ events, and saves a compact specification that
+  references the source catalog artifact. Use it for requests such as "all
+  earthquakes in the last month."
 - For a new map, call `render_events_on_world_map` with objects containing
-  `coord`, `label`, `latitude_radius`, and `color`.
+  `coord`, `label`, `latitude_radius`, and `color` only when the selected event
+  set is small enough to have been returned by `query_usgs_feed`.
 - Before rendering a new map, check whether the selected event set is empty. If
   no events match the user's filters, do not call `render_events_on_world_map`
   or create map artifacts. Report the zero-result finding and catalog
@@ -38,12 +49,13 @@ This skill draws events; it does not decide which earthquakes are relevant.
   optional short `title` and ordered `items` containing `label` and `color`.
   Use the same Pillow-compatible color values as the corresponding events. A
   legend is not required for one-off highlighting unless the user requests it.
-- For a follow-up modification, call `load_current_map_spec`, edit its event
-  array, and pass the complete revised array back to the renderer. Preserve the
-  saved crop request, padding, and legend semantics unless the user asks to
-  change them. Update or remove the legend when its color encoding changes;
-  when reusing a saved legend, pass its `title` and `items` rather than its
-  renderer-selected `corner`.
+- For a follow-up modification to a hand-supplied map, call
+  `load_current_map_spec`, edit its event array, and pass the complete revised
+  array back to `render_events_on_world_map`. For a catalog-backed map, rerun
+  `render_usgs_feed_on_world_map` using the saved `event_source` catalog version
+  and revised filters; its specification intentionally does not expand the
+  thousands of event objects. Preserve the saved crop request and padding
+  unless the user asks to change them.
 - Report both the PNG artifact and its source-specification artifact, including
   their versions and any renderer warnings.
 

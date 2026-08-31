@@ -404,6 +404,67 @@ def _normalize_event(feature: dict[str, Any]) -> dict[str, Any] | None:
     }
 
 
+def _select_catalog_events(
+    catalog: dict[str, Any],
+    *,
+    min_magnitude: float | None,
+    bounds: GeoBounds | None,
+    start: datetime | None,
+    end: datetime | None,
+    sort: SortOrder,
+) -> tuple[list[dict[str, Any]], int, int]:
+    """Normalize, deduplicate, filter, and sort a loaded catalog in process."""
+    deduplicated: dict[str, dict[str, Any]] = {}
+    skipped = 0
+    duplicates = 0
+    for feature in catalog["features"]:
+        if not isinstance(feature, dict):
+            skipped += 1
+            continue
+        event = _normalize_event(feature)
+        if event is None:
+            skipped += 1
+            continue
+        if event["id"] in deduplicated:
+            duplicates += 1
+            if event["time_ms"] <= deduplicated[event["id"]]["time_ms"]:
+                continue
+        deduplicated[event["id"]] = event
+
+    filtered: list[dict[str, Any]] = []
+    for event in deduplicated.values():
+        magnitude = event["magnitude"]
+        if min_magnitude is not None and (
+            magnitude is None or magnitude < min_magnitude
+        ):
+            continue
+        lon, lat = event["coord"]
+        if not _in_bounds(lon, lat, bounds):
+            continue
+        event_time = _parse_utc(event["time"])
+        if event_time is None:
+            continue
+        if start and event_time < start:
+            continue
+        if end and event_time > end:
+            continue
+        filtered.append(event)
+
+    if sort == "magnitude_desc":
+        filtered.sort(
+            key=lambda event: (
+                event["magnitude"]
+                if event["magnitude"] is not None
+                else -math.inf,
+                event["time_ms"],
+            ),
+            reverse=True,
+        )
+    else:
+        filtered.sort(key=lambda event: event["time_ms"], reverse=True)
+    return filtered, skipped, duplicates
+
+
 async def query_usgs_feed(
     feed: FeedName,
     artifact_version: int | None = None,
@@ -480,52 +541,14 @@ async def query_usgs_feed(
         }
     catalog, _ = loaded
 
-    deduplicated: dict[str, dict[str, Any]] = {}
-    skipped = 0
-    duplicates = 0
-    for feature in catalog["features"]:
-        if not isinstance(feature, dict):
-            skipped += 1
-            continue
-        event = _normalize_event(feature)
-        if event is None:
-            skipped += 1
-            continue
-        if event["id"] in deduplicated:
-            duplicates += 1
-            if event["time_ms"] <= deduplicated[event["id"]]["time_ms"]:
-                continue
-        deduplicated[event["id"]] = event
-
-    filtered: list[dict[str, Any]] = []
-    for event in deduplicated.values():
-        magnitude = event["magnitude"]
-        if min_magnitude is not None and (
-            magnitude is None or magnitude < min_magnitude
-        ):
-            continue
-        lon, lat = event["coord"]
-        if not _in_bounds(lon, lat, bounds):
-            continue
-        event_time = _parse_utc(event["time"])
-        if event_time is None:
-            continue
-        if start and event_time < start:
-            continue
-        if end and event_time > end:
-            continue
-        filtered.append(event)
-
-    if sort == "magnitude_desc":
-        filtered.sort(
-            key=lambda event: (
-                event["magnitude"] if event["magnitude"] is not None else -math.inf,
-                event["time_ms"],
-            ),
-            reverse=True,
-        )
-    else:
-        filtered.sort(key=lambda event: event["time_ms"], reverse=True)
+    filtered, skipped, duplicates = _select_catalog_events(
+        catalog,
+        min_magnitude=min_magnitude,
+        bounds=bounds,
+        start=start,
+        end=end,
+        sort=sort,
+    )
 
     returned = filtered[:limit]
     for event in returned:

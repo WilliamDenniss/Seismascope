@@ -13,6 +13,7 @@ from .tools.data_tools import download_usgs_feed
 from .tools.data_tools import query_usgs_feed
 from .tools.map_tools import load_current_map_spec
 from .tools.map_tools import render_events_on_world_map
+from .tools.map_tools import render_usgs_feed_on_world_map
 
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -26,6 +27,7 @@ _skill_toolset = SkillToolset(
     additional_tools=[
         download_usgs_feed,
         query_usgs_feed,
+        render_usgs_feed_on_world_map,
         render_events_on_world_map,
         load_current_map_spec,
     ],
