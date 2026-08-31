@@ -227,8 +227,28 @@
       }
       .viewer-close:hover { background: rgba(35, 55, 72, 0.95); }
 
-      .thinking { color: var(--muted); font-size: 14px; padding: 0 4px 17px; }
-      .thinking::after { content: ""; animation: dots 1.2s steps(4, end) infinite; }
+      .thinking {
+        display: flex;
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 7px;
+        color: var(--muted);
+        font-size: 14px;
+        padding: 0 4px 17px;
+      }
+      .thinking-label::after { content: ""; animation: dots 1.2s steps(4, end) infinite; }
+      .thinking-tools { display: flex; flex-wrap: wrap; gap: 5px; }
+      .thinking-tool {
+        padding: 2px 6px;
+        border: 1px solid rgba(103, 212, 192, 0.28);
+        border-radius: 6px;
+        background: rgba(103, 212, 192, 0.07);
+        color: #b9ddd6;
+        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        font-size: 11px;
+        line-height: 1.35;
+        white-space: nowrap;
+      }
       @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75%, 100% { content: "..."; } }
 
       .composer {
@@ -669,7 +689,12 @@
         function addThinking() {
           const node = document.createElement("div");
           node.className = "thinking";
-          node.textContent = "Analyzing USGS data";
+          const label = document.createElement("span");
+          label.className = "thinking-label";
+          label.textContent = "Analyzing USGS data";
+          const tools = document.createElement("span");
+          tools.className = "thinking-tools";
+          node.append(label, tools);
           conversation.appendChild(node);
           scrollToBottom();
           return node;
@@ -678,6 +703,38 @@
         function updateAgentMessage(row, text) {
           const bubble = row.querySelector(".bubble");
           bubble.replaceChildren(renderMarkdown(text));
+          scrollToBottom();
+        }
+
+        function agentEventToolNames(event) {
+          if (event.author !== "seismic_analyst" || !event.content?.parts) return [];
+          const names = [];
+          for (const part of event.content.parts) {
+            const name = part.functionCall?.name;
+            if (typeof name === "string" && name.trim()) names.push(name.trim());
+          }
+          return names;
+        }
+
+        function applyStreamTools(state, event) {
+          let changed = false;
+          for (const name of agentEventToolNames(event)) {
+            if (state.seen.has(name)) continue;
+            state.seen.add(name);
+            state.names.push(name);
+            changed = true;
+          }
+          return changed;
+        }
+
+        function updateThinkingTools(thinking, names) {
+          const tools = thinking.querySelector(".thinking-tools");
+          tools.replaceChildren(...names.map((name) => {
+            const block = document.createElement("span");
+            block.className = "thinking-tool";
+            block.textContent = name;
+            return block;
+          }));
           scrollToBottom();
         }
 
@@ -950,6 +1007,7 @@
           setBusy(true);
           const thinking = addThinking();
           const streamState = { segments: [], partial: "" };
+          const toolState = { names: [], seen: new Set() };
           const events = [];
           let agentMessage = null;
 
@@ -978,6 +1036,9 @@
                 throw new Error(event.error.trim());
               }
               events.push(event);
+              if (applyStreamTools(toolState, event) && thinking.isConnected) {
+                updateThinkingTools(thinking, toolState.names);
+              }
               const text = applyStreamText(streamState, event);
               if (text !== null && (text.trim() || agentMessage)) {
                 thinking.remove();

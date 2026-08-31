@@ -180,6 +180,13 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert "response.body.getReader()" in page.text
     assert "streaming: true" in page.text
     assert "event.partial === true" in page.text
+    assert "part.functionCall?.name" in page.text
+    assert "functionCall?.args" not in page.text
+    assert 'tools.className = "thinking-tools"' in page.text
+    assert 'block.className = "thinking-tool"' in page.text
+    assert "block.textContent = name" in page.text
+    assert "thinking.isConnected" in page.text
+    assert 'document.createElement("details")' not in page.text
     assert 'replace(/-/g, "+").replace(/_/g, "/")' in page.text
     assert "renderMarkdown" in page.text
     assert 'link.target = "_blank"' in page.text
