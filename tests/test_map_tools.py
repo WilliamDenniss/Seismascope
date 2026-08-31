@@ -5,14 +5,19 @@ import inspect
 from io import BytesIO
 from pathlib import Path
 
+from google.adk.tools import FunctionTool
 from PIL import Image
+from PIL import ImageDraw
 import pytest
 
 import quake_agent.tools.map_tools as map_tools
 from quake_agent.tools.map_tools import MAP_SOURCES
 from quake_agent.tools.map_tools import MINIMUM_CROP_LONG_EDGE_PX
 from quake_agent.tools.map_tools import MapEvent
+from quake_agent.tools.map_tools import MapLegend
+from quake_agent.tools.map_tools import MapLegendItem
 from quake_agent.tools.map_tools import WEB_MERCATOR_MAX_LAT
+from quake_agent.tools.map_tools import _choose_legend_corner
 from quake_agent.tools.map_tools import _select_map_source
 from quake_agent.tools.map_tools import _wrapped_circle_centers
 from quake_agent.tools.map_tools import latitude_radius_to_pixels
@@ -67,6 +72,48 @@ def test_threshold_arguments_are_not_exposed_by_the_renderer() -> None:
     parameters = inspect.signature(render_events_on_world_map).parameters
     assert "high_resolution_crop_threshold_percent" not in parameters
     assert "two_x_crop_threshold_percent" not in parameters
+
+
+def test_renderer_schema_exposes_optional_agent_defined_legend() -> None:
+    declaration = FunctionTool(render_events_on_world_map)._get_declaration()
+    schema = declaration.parameters_json_schema
+
+    assert schema is not None
+    assert "legend" not in schema["required"]
+    assert schema["properties"]["legend"]["default"] is None
+    assert schema["$defs"]["MapLegend"]["required"] == ["items"]
+    assert schema["$defs"]["MapLegendItem"]["required"] == ["label", "color"]
+
+
+def test_legend_corner_selection_avoids_content_and_breaks_ties_bottom_right() -> None:
+    transparent = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
+    corner, box = _choose_legend_corner(transparent, (20, 20), 5)
+    assert corner == "bottom_right"
+    assert box == (75, 75, 95, 95)
+    corner, box = _choose_legend_corner(
+        transparent,
+        (20, 20),
+        5,
+        bottom_clearance=10,
+    )
+    assert corner == "bottom_right"
+    assert box == (75, 65, 95, 85)
+    assert map_tools._legend_display_text("M 2.0–2.9") == "M 2.0-2.9"
+
+    occupied = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(occupied)
+    draw.rectangle((75, 75, 95, 95), fill=(255, 0, 0, 255))
+    corner, _ = _choose_legend_corner(occupied, (20, 20), 5)
+    assert corner == "bottom_left"
+
+    every_corner = Image.new("RGBA", (100, 100), (0, 0, 0, 0))
+    draw = ImageDraw.Draw(every_corner)
+    draw.rectangle((75, 75, 95, 95), fill=(255, 0, 0, 255))
+    draw.rectangle((5, 75, 20, 95), fill=(255, 0, 0, 255))
+    draw.rectangle((75, 5, 85, 25), fill=(255, 0, 0, 255))
+    draw.rectangle((5, 5, 10, 25), fill=(255, 0, 0, 255))
+    corner, _ = _choose_legend_corner(every_corner, (20, 20), 5)
+    assert corner == "top_left"
 
 
 async def test_render_saves_versioned_png_and_spec_without_mutating_source(
@@ -124,6 +171,99 @@ async def test_render_saves_versioned_png_and_spec_without_mutating_source(
     assert historical["status"] == "ok"
     assert historical["artifact_version"] == 0
     assert len(historical["spec"]["events"]) == 2
+
+
+@pytest.mark.parametrize("title", ["Magnitude", None])
+async def test_render_persists_titled_and_untitled_legends_without_changing_viewport(
+    artifact_context,
+    title: str | None,
+) -> None:
+    events = [
+        MapEvent(
+            coord=[0, 0],
+            label="Equator",
+            latitude_radius=2,
+            color="#facc15",
+        )
+    ]
+    plain = await render_events_on_world_map(
+        events,
+        artifact_name="legend-map.png",
+        tool_context=artifact_context,
+    )
+    with_legend = await render_events_on_world_map(
+        events,
+        artifact_name="legend-map.png",
+        legend=MapLegend(
+            title=title,
+            items=[
+                MapLegendItem(label="M 2.0–2.9", color="#facc15"),
+                MapLegendItem(label="M 3.0+", color="#dc2626"),
+            ],
+        ),
+        tool_context=artifact_context,
+    )
+
+    assert plain["legend"] is None
+    assert with_legend["width"] == plain["width"]
+    assert with_legend["height"] == plain["height"]
+    assert with_legend["bounds"] == plain["bounds"]
+    assert with_legend["crop"] == plain["crop"]
+    assert with_legend["legend"] == {
+        "title": title,
+        "items": [
+            {"label": "M 2.0–2.9", "color": "#facc15"},
+            {"label": "M 3.0+", "color": "#dc2626"},
+        ],
+        "corner": "bottom_right",
+    }
+
+    loaded = await load_current_map_spec(tool_context=artifact_context)
+    assert loaded["spec"]["legend"] == with_legend["legend"]
+    historical = await load_current_map_spec(
+        artifact_version=0,
+        tool_context=artifact_context,
+    )
+    assert historical["spec"]["legend"] is None
+
+    map_part = await artifact_context.load_artifact("legend-map.png", version=1)
+    assert map_part.inline_data is not None
+    with Image.open(BytesIO(bytes(map_part.inline_data.data))) as image:
+        assert image.size == (plain["width"], plain["height"])
+
+
+async def test_saved_legend_survives_a_follow_up_revision(artifact_context) -> None:
+    events = [
+        MapEvent(
+            coord=[-122.3, 37.8],
+            label="California",
+            latitude_radius=2,
+            color="#f97316",
+        )
+    ]
+    first = await render_events_on_world_map(
+        events,
+        legend=MapLegend(
+            title="Magnitude",
+            items=[MapLegendItem(label="M 3.0–3.9", color="#f97316")],
+        ),
+        tool_context=artifact_context,
+    )
+    loaded = await load_current_map_spec(tool_context=artifact_context)
+    saved_legend = loaded["spec"]["legend"]
+
+    revised = await render_events_on_world_map(
+        [MapEvent(**loaded["spec"]["events"][0])],
+        legend=MapLegend(
+            title=saved_legend["title"],
+            items=[MapLegendItem(**item) for item in saved_legend["items"]],
+        ),
+        tool_context=artifact_context,
+    )
+
+    assert first["legend"] == revised["legend"]
+    assert revised["map_artifact_version"] == 1
+    assert revised["spec_artifact_version"] == 1
 
 
 async def test_state_and_artifacts_survive_new_file_service_instance(tmp_path: Path) -> None:
@@ -215,6 +355,46 @@ async def test_crop_stitches_antimeridian_into_compact_output(artifact_context) 
     assert rendered["crop"]["wraps_antimeridian"] is True
     assert rendered["source_map"] == "static/world_map_4x.png"
     assert rendered["bounds"]["west"] > rendered["bounds"]["east"]
+
+
+async def test_legend_does_not_change_scaled_antimeridian_crop(artifact_context) -> None:
+    events = [
+        MapEvent(
+            coord=[179.5, 0],
+            label="",
+            latitude_radius=4,
+            color="royalblue",
+        )
+    ]
+    plain = await render_events_on_world_map(
+        events,
+        artifact_name="plain-crop.png",
+        crop_to_drawn_area=True,
+        crop_padding_px=8,
+        tool_context=artifact_context,
+    )
+    with_legend = await render_events_on_world_map(
+        events,
+        artifact_name="legend-crop.png",
+        crop_to_drawn_area=True,
+        crop_padding_px=8,
+        legend=MapLegend(
+            items=[
+                MapLegendItem(label="Low", color="royalblue"),
+                MapLegendItem(label="High", color="#dc2626"),
+            ]
+        ),
+        tool_context=artifact_context,
+    )
+
+    assert plain["source_map"] == "static/world_map_4x.png"
+    assert with_legend["source_map"] == plain["source_map"]
+    assert with_legend["width"] == plain["width"]
+    assert with_legend["height"] == plain["height"]
+    assert with_legend["bounds"] == plain["bounds"]
+    assert with_legend["crop"] == plain["crop"]
+    assert with_legend["crop"]["wraps_antimeridian"] is True
+    assert with_legend["legend"] is not None
 
 
 async def test_crop_uses_two_x_map_when_it_reaches_minimum_long_edge(
@@ -351,3 +531,42 @@ async def test_renderer_clamps_latitude_and_rejects_unsafe_artifact_name(
     assert any("normalized" in warning for warning in clamped["warnings"])
     assert any("clamped" in warning for warning in clamped["warnings"])
     assert unsafe["status"] == "error"
+
+
+@pytest.mark.parametrize(
+    ("legend", "error_fragment"),
+    [
+        (MapLegend(items=[]), "at least one item"),
+        (
+            MapLegend(items=[MapLegendItem(label="   ", color="red")]),
+            "non-blank label",
+        ),
+        (
+            MapLegend(
+                items=[
+                    MapLegendItem(label="Invalid", color="definitely-not-a-color")
+                ]
+            ),
+            "color 'definitely-not-a-color' is invalid",
+        ),
+        (
+            MapLegend(items=[MapLegendItem(label="x" * 1000, color="red")]),
+            "does not fit within the rendered map",
+        ),
+    ],
+)
+async def test_invalid_or_oversized_legend_does_not_save_artifacts(
+    artifact_context,
+    legend: MapLegend,
+    error_fragment: str,
+) -> None:
+    rendered = await render_events_on_world_map(
+        [MapEvent(coord=[0, 0], label="", latitude_radius=2, color="red")],
+        legend=legend,
+        tool_context=artifact_context,
+    )
+
+    assert rendered["status"] == "error"
+    assert error_fragment in rendered["error"]
+    assert await artifact_context.list_versions("earthquake-map.png") == []
+    assert await artifact_context.list_versions("earthquake-map-spec.json") == []

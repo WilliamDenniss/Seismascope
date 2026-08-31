@@ -35,9 +35,16 @@ This skill draws events; it does not decide which earthquakes are relevant.
 - Choose colors and labels to match the user's request. Do not invent a
   magnitude-to-radius rule unless the user asks for one; if you choose a visual
   encoding, explain it.
+- Whenever color communicates categories or ranges, pass a `legend` with an
+  optional short `title` and ordered `items` containing `label` and `color`.
+  Use the same Pillow-compatible color values as the corresponding events. A
+  legend is not required for one-off highlighting unless the user requests it.
 - For a follow-up modification, call `load_current_map_spec`, edit its event
   array, and pass the complete revised array back to the renderer. Preserve the
-  saved crop request and padding unless the user asks to change the framing.
+  saved crop request, padding, and legend semantics unless the user asks to
+  change them. Update or remove the legend when its color encoding changes;
+  when reusing a saved legend, pass its `title` and `items` rather than its
+  renderer-selected `corner`.
 - Report both the PNG artifact and its source-specification artifact, including
   their versions and any renderer warnings.
 

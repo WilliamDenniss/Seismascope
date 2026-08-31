@@ -32,6 +32,19 @@ DEFAULT_MAP_ARTIFACT = "earthquake-map.png"
 DEFAULT_CROP_PADDING_PX = 32
 MAX_CROP_PADDING_PX = 1024
 _SAFE_ARTIFACT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*\.png$")
+_LEGEND_TEXT_TRANSLATION = str.maketrans(
+    {
+        "\u00a0": " ",
+        "\u2013": "-",
+        "\u2014": "-",
+        "\u2212": "-",
+        "\u2018": "'",
+        "\u2019": "'",
+        "\u201c": '"',
+        "\u201d": '"',
+        "\u2026": "...",
+    }
+)
 
 
 class MapEvent(BaseModel):
@@ -41,6 +54,20 @@ class MapEvent(BaseModel):
     label: str
     latitude_radius: float
     color: str
+
+
+class MapLegendItem(BaseModel):
+    """One ordered color key in an optional map legend."""
+
+    label: str
+    color: str
+
+
+class MapLegend(BaseModel):
+    """Agent-supplied semantics for colors used on a rendered map."""
+
+    title: str | None = None
+    items: list[MapLegendItem]
 
 
 def _normalize_longitude(longitude: float) -> tuple[float, bool]:
@@ -108,6 +135,137 @@ def _artifact_names(artifact_name: str) -> tuple[str, str] | None:
 
 def _parse_color(value: str) -> tuple[int, int, int, int]:
     return ImageColor.getcolor(value, "RGBA")
+
+
+def _marker_colors(
+    rgba: tuple[int, int, int, int],
+) -> tuple[tuple[int, int, int, int], tuple[int, int, int, int]]:
+    fill_alpha = rgba[3] if rgba[3] < 255 else 96
+    return (
+        (rgba[0], rgba[1], rgba[2], fill_alpha),
+        (rgba[0], rgba[1], rgba[2], 255),
+    )
+
+
+def _prepare_legend(legend: MapLegend | None) -> dict[str, Any] | None:
+    if legend is None:
+        return None
+    if not legend.items:
+        raise ValueError("legend.items must contain at least one item.")
+
+    title = legend.title.strip() if legend.title is not None else None
+    prepared_items: list[dict[str, Any]] = []
+    for index, item in enumerate(legend.items):
+        label = item.label.strip()
+        if not label:
+            raise ValueError(f"Legend item {index} must have a non-blank label.")
+        try:
+            rgba = _parse_color(item.color)
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"Legend item {index} color {item.color!r} is invalid."
+            ) from exc
+        fill, outline = _marker_colors(rgba)
+        prepared_items.append(
+            {
+                "label": label,
+                "color": item.color,
+                "fill": fill,
+                "outline": outline,
+            }
+        )
+    return {"title": title or None, "items": prepared_items}
+
+
+def _legend_candidate_boxes(
+    image_size: tuple[int, int],
+    panel_size: tuple[int, int],
+    margin: int,
+    bottom_clearance: int = 0,
+) -> list[tuple[str, tuple[int, int, int, int]]]:
+    width, height = image_size
+    panel_width, panel_height = panel_size
+    left = margin
+    top = margin
+    right = width - margin - panel_width
+    bottom = height - margin - bottom_clearance - panel_height
+    candidates: list[tuple[str, tuple[int, int, int, int]]] = []
+    if bottom >= top:
+        candidates.extend(
+            [
+                (
+                    "bottom_right",
+                    (right, bottom, right + panel_width, bottom + panel_height),
+                ),
+                (
+                    "bottom_left",
+                    (left, bottom, left + panel_width, bottom + panel_height),
+                ),
+            ]
+        )
+    candidates.extend(
+        [
+            ("top_right", (right, top, right + panel_width, top + panel_height)),
+            ("top_left", (left, top, left + panel_width, top + panel_height)),
+        ]
+    )
+    return candidates
+
+
+def _occupied_pixel_count(
+    content_overlay: Image.Image,
+    box: tuple[int, int, int, int],
+) -> int:
+    histogram = content_overlay.getchannel("A").crop(box).histogram()
+    return sum(histogram[1:])
+
+
+def _choose_legend_corner(
+    content_overlay: Image.Image,
+    panel_size: tuple[int, int],
+    margin: int,
+    bottom_clearance: int = 0,
+) -> tuple[str, tuple[int, int, int, int]]:
+    candidates = _legend_candidate_boxes(
+        content_overlay.size,
+        panel_size,
+        margin,
+        bottom_clearance,
+    )
+    return min(
+        candidates,
+        key=lambda candidate: _occupied_pixel_count(content_overlay, candidate[1]),
+    )
+
+
+def _load_legend_font(size: int) -> ImageFont.ImageFont:
+    try:
+        return ImageFont.truetype("DejaVuSans.ttf", size=size)
+    except OSError:
+        return ImageFont.load_default(size=size)
+
+
+def _legend_display_text(value: str) -> str:
+    """Replace common unsupported punctuation in Pillow's bundled font."""
+    return value.translate(_LEGEND_TEXT_TRANSLATION)
+
+
+def _crop_contains_source_bottom_right(
+    crop: dict[str, int | bool],
+    source_size: tuple[int, int],
+) -> bool:
+    source_width, source_height = source_size
+    source_x = int(crop["source_x"])
+    source_y = int(crop["source_y"])
+    crop_width = int(crop["width"])
+    crop_height = int(crop["height"])
+    contains_bottom = source_y + crop_height >= source_height
+    contains_right = (
+        crop_width == source_width
+        or bool(crop["wraps_antimeridian"])
+        or source_x + crop_width >= source_width
+    )
+    return contains_bottom and contains_right
 
 
 def _label_candidates(
@@ -309,7 +467,7 @@ def _render_scaled_crop(
     placed_labels: list[dict[str, Any]],
     standard_crop: dict[str, int | bool],
     source: MapSource,
-) -> tuple[Image.Image, dict[str, int | bool]]:
+) -> tuple[Image.Image, dict[str, int | bool], Image.Image]:
     source_path, source_size = source
     scale = _map_source_scale(source)
     scaled_crop = _scaled_crop(standard_crop, scale)
@@ -322,12 +480,13 @@ def _render_scaled_crop(
                 f"{source_size[0]}x{source_size[1]}, "
                 f"not {source_image.width}x{source_image.height}."
             )
-        rendered = _crop_wrapped_image(source_image, scaled_crop).convert("RGB")
+        base = _crop_wrapped_image(source_image, scaled_crop).convert("RGBA")
 
     crop_x = int(scaled_crop["source_x"])
     crop_y = int(scaled_crop["source_y"])
     crop_width = int(scaled_crop["width"])
-    draw = ImageDraw.Draw(rendered, "RGBA")
+    content_overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(content_overlay, "RGBA")
     outline_width = max(2, round(source_size[0] / 1024))
     for item in prepared:
         radius = item["radius_px"] * scale
@@ -370,14 +529,159 @@ def _render_scaled_crop(
             stroke_width=outline_width,
             stroke_fill=(255, 255, 255, 235),
         )
-    return rendered, scaled_crop
+    rendered = Image.alpha_composite(base, content_overlay).convert("RGB")
+    return rendered, scaled_crop, content_overlay
+
+
+def _render_legend(
+    rendered: Image.Image,
+    content_overlay: Image.Image,
+    prepared_legend: dict[str, Any] | None,
+    source_scale: int,
+    reserve_bottom_attribution: bool,
+) -> tuple[Image.Image, dict[str, Any] | None]:
+    if prepared_legend is None:
+        return rendered, None
+
+    width, height = rendered.size
+    font_size = max(
+        10 * source_scale,
+        round(min(width, height) * 0.018),
+    )
+    font = _load_legend_font(font_size)
+    measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
+    padding = max(4 * source_scale, round(font_size * 0.5))
+    margin = max(4 * source_scale, round(font_size * 0.5))
+    swatch_size = font_size
+    column_gap = max(3 * source_scale, round(font_size * 0.4))
+    row_gap = max(2 * source_scale, round(font_size * 0.25))
+    section_gap = max(3 * source_scale, round(font_size * 0.4))
+
+    title = prepared_legend["title"]
+    display_title = _legend_display_text(title) if title is not None else None
+    title_size = (0, 0)
+    title_top = 0
+    if display_title is not None:
+        title_box = measure.textbbox((0, 0), display_title, font=font)
+        title_size = (title_box[2] - title_box[0], title_box[3] - title_box[1])
+        title_top = title_box[1]
+
+    item_layout: list[dict[str, Any]] = []
+    content_width = title_size[0]
+    content_height = title_size[1]
+    if title is not None:
+        content_height += section_gap
+    for index, item in enumerate(prepared_legend["items"]):
+        display_label = _legend_display_text(item["label"])
+        text_box = measure.textbbox((0, 0), display_label, font=font)
+        text_width = text_box[2] - text_box[0]
+        text_height = text_box[3] - text_box[1]
+        row_height = max(swatch_size, text_height)
+        row_width = swatch_size + column_gap + text_width
+        content_width = max(content_width, row_width)
+        if index:
+            content_height += row_gap
+        content_height += row_height
+        item_layout.append(
+            {
+                **item,
+                "display_label": display_label,
+                "text_top": text_box[1],
+                "text_height": text_height,
+                "row_height": row_height,
+            }
+        )
+
+    panel_size = (
+        math.ceil(content_width + 2 * padding),
+        math.ceil(content_height + 2 * padding),
+    )
+    if panel_size[0] + 2 * margin > width or panel_size[1] + 2 * margin > height:
+        raise ValueError(
+            "Legend does not fit within the rendered map; shorten its labels "
+            "or use fewer items."
+        )
+
+    bottom_clearance = (
+        max(24 * source_scale, round(font_size * 1.25))
+        if reserve_bottom_attribution
+        else 0
+    )
+    corner, panel_box = _choose_legend_corner(
+        content_overlay,
+        panel_size,
+        margin,
+        bottom_clearance,
+    )
+    legend_overlay = Image.new("RGBA", rendered.size, (0, 0, 0, 0))
+    draw = ImageDraw.Draw(legend_overlay, "RGBA")
+    border_width = max(1, round(font_size / 10))
+    radius = max(4 * source_scale, round(font_size * 0.4))
+    draw_panel_box = (
+        panel_box[0],
+        panel_box[1],
+        panel_box[2] - 1,
+        panel_box[3] - 1,
+    )
+    draw.rounded_rectangle(
+        draw_panel_box,
+        radius=radius,
+        fill=(255, 255, 255, 224),
+        outline=(20, 20, 20, 210),
+        width=border_width,
+    )
+
+    x = panel_box[0] + padding
+    y = panel_box[1] + padding
+    if title is not None:
+        draw.text(
+            (x, y - title_top),
+            display_title,
+            font=font,
+            fill=(20, 20, 20, 255),
+        )
+        y += title_size[1] + section_gap
+    swatch_outline_width = max(2, round(font_size / 10))
+    for index, item in enumerate(item_layout):
+        if index:
+            y += row_gap
+        swatch_top = y + (item["row_height"] - swatch_size) / 2
+        draw.ellipse(
+            (x, swatch_top, x + swatch_size, swatch_top + swatch_size),
+            fill=item["fill"],
+            outline=item["outline"],
+            width=swatch_outline_width,
+        )
+        text_y = y + (item["row_height"] - item["text_height"]) / 2
+        draw.text(
+            (x + swatch_size + column_gap, text_y - item["text_top"]),
+            item["display_label"],
+            font=font,
+            fill=(20, 20, 20, 255),
+        )
+        y += item["row_height"]
+
+    composited = Image.alpha_composite(
+        rendered.convert("RGBA"), legend_overlay
+    ).convert("RGB")
+    spec = {
+        "title": title,
+        "items": [
+            {"label": item["label"], "color": item["color"]}
+            for item in prepared_legend["items"]
+        ],
+        "corner": corner,
+    }
+    return composited, spec
 
 
 def _render_map(
     events: list[MapEvent],
     crop_to_drawn_area: bool = False,
     crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
+    legend: MapLegend | None = None,
 ) -> tuple[bytes, dict[str, Any], list[str], int]:
+    prepared_legend = _prepare_legend(legend)
     standard_path, standard_size = MAP_SOURCES[0]
     if not standard_path.is_file():
         raise FileNotFoundError(f"Base map not found at {standard_path}.")
@@ -440,7 +744,7 @@ def _render_map(
                 clamped_latitude, event.latitude_radius, height
             ),
         )
-        fill_alpha = rgba[3] if rgba[3] < 255 else 96
+        fill, outline = _marker_colors(rgba)
         prepared.append(
             {
                 "index": index,
@@ -449,8 +753,8 @@ def _render_map(
                 "latitude_radius": event.latitude_radius,
                 "color": event.color,
                 "rgba": rgba,
-                "fill": (rgba[0], rgba[1], rgba[2], fill_alpha),
-                "outline": (rgba[0], rgba[1], rgba[2], 255),
+                "fill": fill,
+                "outline": outline,
                 "x": x,
                 "y": y,
                 "radius_px": radius,
@@ -517,6 +821,7 @@ def _render_map(
         placed_labels.append({"label": label, "x": chosen[0], "y": chosen[1]})
 
     rendered = Image.alpha_composite(image, overlay).convert("RGB")
+    content_overlay = overlay
     crop: dict[str, int | bool] = {
         "source_x": 0,
         "source_y": 0,
@@ -536,6 +841,7 @@ def _render_map(
             crop_applied = crop["width"] != width or crop["height"] != height
             if crop_applied:
                 rendered = _crop_wrapped_image(rendered, crop)
+                content_overlay = _crop_wrapped_image(content_overlay, crop)
 
     selected_source = MAP_SOURCES[0]
     if crop_applied:
@@ -544,7 +850,7 @@ def _render_map(
     source_scale = _map_source_scale(selected_source)
     source_padding_px = crop_padding_px
     if selected_source != MAP_SOURCES[0]:
-        rendered, crop = _render_scaled_crop(
+        rendered, crop, content_overlay = _render_scaled_crop(
             prepared,
             placed_labels,
             crop,
@@ -552,6 +858,14 @@ def _render_map(
         )
         width, height = source_size
         source_padding_px = crop_padding_px * source_scale
+
+    rendered, legend_spec = _render_legend(
+        rendered,
+        content_overlay,
+        prepared_legend,
+        source_scale,
+        _crop_contains_source_bottom_right(crop, source_size),
+    )
 
     minimum_long_edge_satisfied = (
         max(rendered.width, rendered.height) >= MINIMUM_CROP_LONG_EDGE_PX
@@ -591,6 +905,7 @@ def _render_map(
         },
         "width": rendered.width,
         "height": rendered.height,
+        "legend": legend_spec,
         "events": [
             {
                 "coord": item["coord"],
@@ -609,6 +924,7 @@ async def render_events_on_world_map(
     artifact_name: str = DEFAULT_MAP_ARTIFACT,
     crop_to_drawn_area: bool = False,
     crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
+    legend: MapLegend | None = None,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """Render supplied event circles onto the immutable canonical world map.
@@ -622,6 +938,7 @@ async def render_events_on_world_map(
             source whose output long edge reaches 1400 pixels, when available.
             The full-world map remains the default.
         crop_padding_px: Context to retain around drawn content when cropping.
+        legend: Optional ordered color keys and heading supplied by the agent.
 
     Returns:
         Versioned PNG and map-spec artifact handles, dimensions, counts, and
@@ -653,6 +970,7 @@ async def render_events_on_world_map(
             events,
             crop_to_drawn_area=crop_to_drawn_area,
             crop_padding_px=crop_padding_px,
+            legend=legend,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         return {"status": "error", "error": str(exc)}
@@ -666,6 +984,9 @@ async def render_events_on_world_map(
                 "projection": "web_mercator",
                 "event_count": len(spec["events"]),
                 "cropped": spec["crop"]["applied"],
+                "legend_item_count": len(spec["legend"]["items"])
+                if spec["legend"] is not None
+                else 0,
             },
         )
         spec_version = await tool_context.save_artifact(
@@ -694,6 +1015,7 @@ async def render_events_on_world_map(
         "crop": spec["crop"],
         "bounds": spec["bounds"],
         "source_map": spec["source"]["artifact"],
+        "legend": spec["legend"],
         "rendered_count": len(spec["events"]),
         "skipped_count": skipped,
         "warnings": warnings,

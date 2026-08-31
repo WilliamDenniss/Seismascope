@@ -21,6 +21,31 @@ Colors may be Pillow-compatible names, hex values, or RGBA values. Circles are
 translucent with opaque outlines. Larger circles are drawn first, circles wrap
 across the antimeridian, and labels use deterministic collision-aware placement.
 
+When colors communicate categories or ranges, the agent can supply an explicit
+legend alongside the events:
+
+```json
+{
+  "title": "Magnitude",
+  "items": [
+    {"label": "M 2.0–2.9", "color": "#facc15"},
+    {"label": "M 3.0–3.9", "color": "#f97316"},
+    {"label": "M 4.0+", "color": "#dc2626"}
+  ]
+}
+```
+
+The title is optional and item order is preserved. Every item must have a
+non-blank label and a valid Pillow-compatible color. The renderer draws
+matching translucent circular swatches in a semi-opaque inset after the final
+map crop and resolution are selected. It scores the four corners against the
+rendered circles and labels, chooses the corner with the least overlap, and
+prefers the bottom-right when scores tie. If the complete legend cannot fit,
+rendering fails instead of saving a partial or misleading legend. The legend
+does not change the geographic crop, bounds, source selection, or output size.
+The saved map specification records the legend title, ordered items, and chosen
+corner so a later revision can preserve its semantics.
+
 Set `crop_to_drawn_area=true` to crop the result to the smallest pixel area that
 contains every rendered circle and placed label. `crop_padding_px` defaults to
 32 pixels and may be set from 0 through 1024. Horizontal cropping treats the
