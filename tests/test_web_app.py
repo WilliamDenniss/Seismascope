@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+import re
 from collections.abc import Callable
 from typing import Any
 from uuid import uuid4
@@ -123,7 +125,24 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert 'event.key === "Escape"' in page.text
     assert "Full size" not in page.text
     assert "Download" in page.text
-    assert page.text.count('class="prompt-chip"') == 6
+    prompt_bank_match = re.search(
+        r'<script id="example-prompt-bank" type="application/json">\s*'
+        r"(\[.*?\])\s*</script>",
+        page.text,
+        re.DOTALL,
+    )
+    assert prompt_bank_match is not None
+    prompt_bank = json.loads(prompt_bank_match.group(1))
+    featured_prompt = "Show me a map of all earthquakes in the last month."
+    assert len(prompt_bank) == 30
+    assert len(set(prompt_bank)) == 30
+    assert prompt_bank.count(featured_prompt) == 1
+    assert prompt_bank[0] == featured_prompt
+    assert "const examplePromptCount = 6;" in page.text
+    assert "const candidates = examplePromptBank.slice(1);" in page.text
+    assert "selected.splice(featuredPosition, 0, featuredPrompt);" in page.text
+    assert "renderExamplePrompts();" in page.text
+    assert '<button class="prompt-chip"' not in page.text
     assert page.headers["cache-control"] == "no-store"
     assert config.json() == {
         "apiBaseUrl": "https://api.example.test/adk",

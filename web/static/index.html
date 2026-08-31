@@ -296,14 +296,7 @@
         <div id="welcome" class="welcome">
           <h2>See recent earthquakes in context.</h2>
           <p>Ask about the official hourly or monthly USGS feed. Quake Agent can filter events, compare observations, and draw versioned maps.</p>
-          <div class="prompts">
-            <button class="prompt-chip" type="button">Map hourly earthquakes of magnitude 2 or greater</button>
-            <button class="prompt-chip" type="button">Show the ten largest events in the monthly feed</button>
-            <button class="prompt-chip" type="button">Map recent earthquakes around the Pacific</button>
-            <button class="prompt-chip" type="button">Map monthly earthquakes around Japan</button>
-            <button class="prompt-chip" type="button">Show me a map of all earthquakes in the last month.</button>
-            <button class="prompt-chip" type="button">Map earthquakes near Alaska and color them by magnitude</button>
-          </div>
+          <div id="example-prompts" class="prompts"></div>
         </div>
       </section>
 
@@ -321,12 +314,53 @@
       <img id="viewer-image" alt="">
     </dialog>
 
+    <script id="example-prompt-bank" type="application/json">
+      [
+        "Show me a map of all earthquakes in the last month.",
+        "Map all earthquakes in the hourly USGS feed on a full-world view.",
+        "Map hourly earthquakes of magnitude 2 or greater. Label each event and color shallow earthquakes green and deeper ones purple, with a legend.",
+        "Map magnitude 5+ earthquakes from the monthly USGS feed worldwide.",
+        "Map earthquakes of magnitude 4 or greater around Japan from the monthly feed. Crop to the region and keep enough geographic context.",
+        "Map magnitude 4+ earthquakes around Alaska from the monthly feed. Color events under 35 km deep green, events 35–100 km deep orange, and deeper events purple; include a Depth legend and crop to the region.",
+        "Map monthly magnitude 4+ earthquakes between 170°E and 170°W, from 0°N to 65°N. Crop the result so the antimeridian is stitched together.",
+        "Map magnitude 3+ earthquakes in California from the monthly feed and crop to the state's region.",
+        "Map magnitude 4+ earthquakes around the Mediterranean from the monthly feed and crop to the region.",
+        "Map magnitude 4.5+ earthquakes around Indonesia and Papua New Guinea from the monthly feed.",
+        "Map magnitude 4.5+ earthquakes along the west coast of South America from the monthly feed and crop to the active region.",
+        "Map magnitude 4+ earthquakes around New Zealand, Tonga, and Fiji from the monthly feed, keeping both sides of the date line together.",
+        "Map magnitude 3+ earthquakes in the Caribbean from the monthly feed and crop to the islands.",
+        "Map magnitude 3+ earthquakes across the western United States from the monthly feed.",
+        "Map magnitude 4+ earthquakes from the newest seven days represented in the monthly feed and keep a full-world view.",
+        "Map the 20 largest earthquakes in the monthly feed. Label each event, size the circles by magnitude, and include a legend.",
+        "Map the 15 deepest magnitude 5+ earthquakes in the monthly feed. Color them by depth and include a legend.",
+        "Put the ten largest Japan-region and Alaska-region earthquakes from the monthly feed on one world map: Japan in red and Alaska in blue, with a legend.",
+        "Map magnitude 4+ earthquakes within 15 degrees of the equator from the monthly feed on a full-world view.",
+        "Map magnitude 2.5+ earthquakes around Hawaii from the monthly feed and crop closely with enough ocean context.",
+        "Map the 100 newest monthly earthquakes around Puerto Rico and the Virgin Islands, coloring magnitude 3+ events red and smaller events blue.",
+        "Map the strongest earthquake in the monthly feed in red and the next nine strongest in gold; label all ten and include a legend.",
+        "Compare the feeds on one world map: plot every earthquake from the hourly feed in red and the ten largest earthquakes from the monthly feed in blue. Label the monthly top ten and include a legend.",
+        "Show the ten largest earthquakes in the monthly feed, with time, magnitude, depth, location, and linked coordinates.",
+        "Show the ten most recent earthquakes in the hourly feed, newest first.",
+        "What is the largest earthquake in the hourly feed? Include its time, depth, location, and a linked coordinate.",
+        "Compare the number and largest magnitude of monthly magnitude 4+ earthquakes around Japan and Alaska. Treat this only as a 30-day snapshot.",
+        "Summarize the monthly feed by magnitude bands: below 1, 1–1.9, 2–2.9, 3–3.9, and 4+.",
+        "List monthly earthquakes of magnitude 6 or greater, largest first, with linked coordinates and USGS detail links.",
+        "Refresh the hourly feed, report whether the result came from cache, and summarize its five newest events."
+      ]
+    </script>
+
     <script>
       (() => {
         "use strict";
 
         const conversation = document.querySelector("#conversation");
         const welcome = document.querySelector("#welcome");
+        const examplePromptContainer = document.querySelector("#example-prompts");
+        const examplePromptBank = Object.freeze(JSON.parse(
+          document.querySelector("#example-prompt-bank").textContent
+        ));
+        const featuredPrompt = examplePromptBank[0];
+        const examplePromptCount = 6;
         const form = document.querySelector("#composer");
         const prompt = document.querySelector("#prompt");
         const send = document.querySelector("#send");
@@ -357,6 +391,30 @@
 
         function scrollToBottom() {
           conversation.scrollTop = conversation.scrollHeight;
+        }
+
+        function chooseExamplePrompts(random = Math.random) {
+          const candidates = examplePromptBank.slice(1);
+          const optionalPromptCount = examplePromptCount - 1;
+          for (let index = 0; index < optionalPromptCount; index += 1) {
+            const swapIndex = index + Math.floor(random() * (candidates.length - index));
+            [candidates[index], candidates[swapIndex]] = [candidates[swapIndex], candidates[index]];
+          }
+          const selected = candidates.slice(0, optionalPromptCount);
+          const featuredPosition = Math.floor(random() * examplePromptCount);
+          selected.splice(featuredPosition, 0, featuredPrompt);
+          return selected;
+        }
+
+        function renderExamplePrompts() {
+          for (const example of chooseExamplePrompts()) {
+            const button = document.createElement("button");
+            button.className = "prompt-chip";
+            button.type = "button";
+            button.textContent = example;
+            button.addEventListener("click", () => submitPrompt(example));
+            examplePromptContainer.appendChild(button);
+          }
         }
 
         function appendInlineMarkdown(parent, source, depth = 0) {
@@ -844,9 +902,7 @@
           prompt.style.height = `${Math.min(prompt.scrollHeight, 150)}px`;
         });
 
-        document.querySelectorAll(".prompt-chip").forEach((button) => {
-          button.addEventListener("click", () => submitPrompt(button.textContent));
-        });
+        renderExamplePrompts();
 
         newConversation.addEventListener("click", () => {
           sessionStorage.setItem(sessionKey, crypto.randomUUID());
