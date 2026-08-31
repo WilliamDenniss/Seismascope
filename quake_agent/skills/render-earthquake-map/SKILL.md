@@ -49,13 +49,18 @@ This skill draws events; it does not decide which earthquakes are relevant.
   optional short `title` and ordered `items` containing `label` and `color`.
   Use the same Pillow-compatible color values as the corresponding events. A
   legend is not required for one-off highlighting unless the user requests it.
+- When the user asks for a title, date, or caption embedded in the downloadable
+  image, pass a `caption` containing a concise `title` and explicit `date` display
+  string. The date may be a day, range, month, or "as of" timestamp. Do not use
+  the catalog generation time as the event date unless that is what the user
+  requested.
 - For a follow-up modification to a hand-supplied map, call
   `load_current_map_spec`, edit its event array, and pass the complete revised
   array back to `plot_data_points_on_map`. For a catalog-backed map, rerun
   `plot_usgs_feed_on_map` using the saved `event_source` catalog version
   and revised filters; its specification intentionally does not expand the
-  thousands of event objects. Preserve the saved crop request and padding
-  unless the user asks to change them.
+  thousands of event objects. Preserve the saved crop request, padding, legend,
+  and caption unless the user asks to change them.
 - Report both the PNG artifact and its source-specification artifact, including
   their versions and any renderer warnings.
 

@@ -56,6 +56,24 @@ does not change the geographic crop, bounds, source selection, or output size.
 The saved map specification records the legend title, ordered items, and chosen
 corner so a later revision can preserve its semantics.
 
+The agent may also supply an optional caption that is embedded in the PNG:
+
+```json
+{
+  "title": "Magnitude 4+ Earthquakes near New Zealand",
+  "date": "August 1-31, 2026"
+}
+```
+
+Both values must be non-blank, single-line display strings. The date is
+deliberately not restricted to one date format so it can represent a day,
+range, month, or "as of" timestamp. The renderer adds the caption in a header
+above the completed map so it does not cover event markers, labels, the legend,
+or base-map attribution. A caption does not affect geographic cropping, bounds,
+source-map selection, or the minimum-resolution calculation. The saved map
+specification records the caption and a `map_viewport` rectangle that locates
+the geographic map within the taller captioned PNG.
+
 Set `crop_to_drawn_area=true` to crop the result to the smallest pixel area that
 contains every rendered circle and placed label. `crop_padding_px` defaults to
 32 pixels and may be set from 0 through 1024. Horizontal cropping treats the

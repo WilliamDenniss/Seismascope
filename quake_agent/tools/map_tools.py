@@ -81,6 +81,13 @@ class MapLegend(BaseModel):
     items: list[MapLegendItem]
 
 
+class MapCaption(BaseModel):
+    """Agent-supplied title and date displayed above a rendered map."""
+
+    title: str = Field(min_length=1, max_length=120)
+    date: str = Field(min_length=1, max_length=64)
+
+
 DENSE_MAP_LABEL_MIN_MAGNITUDE = 6.0
 DENSE_MAP_MAGNITUDE_LEGEND = MapLegend(
     title="Magnitude",
@@ -231,6 +238,20 @@ def _prepare_legend(legend: MapLegend | None) -> dict[str, Any] | None:
     return {"title": title or None, "items": prepared_items}
 
 
+def _prepare_caption(caption: MapCaption | None) -> dict[str, str] | None:
+    if caption is None:
+        return None
+    title = caption.title.strip()
+    date = caption.date.strip()
+    if not title:
+        raise ValueError("caption.title must be non-blank.")
+    if not date:
+        raise ValueError("caption.date must be non-blank.")
+    if any(character in title or character in date for character in "\r\n\t"):
+        raise ValueError("Caption title and date must each be a single line.")
+    return {"title": title, "date": date}
+
+
 def _legend_candidate_boxes(
     image_size: tuple[int, int],
     panel_size: tuple[int, int],
@@ -310,6 +331,32 @@ def _load_label_font(size: int = 10) -> ImageFont.ImageFont:
 def _legend_display_text(value: str) -> str:
     """Replace common unsupported punctuation in Pillow's bundled font."""
     return value.translate(_LEGEND_TEXT_TRANSLATION)
+
+
+def _load_caption_font(size: int, *, bold: bool) -> ImageFont.ImageFont:
+    font_name = "DejaVuSans-Bold.ttf" if bold else "DejaVuSans.ttf"
+    try:
+        return ImageFont.truetype(font_name, size=size)
+    except OSError:
+        return ImageFont.load_default(size=size)
+
+
+def _fit_caption_font(
+    text: str,
+    max_width: int,
+    preferred_size: int,
+    *,
+    bold: bool,
+) -> tuple[ImageFont.ImageFont, tuple[int, int, int, int]]:
+    measure = ImageDraw.Draw(Image.new("RGB", (1, 1)))
+    for size in range(preferred_size, 9, -1):
+        font = _load_caption_font(size, bold=bold)
+        box = measure.textbbox((0, 0), text, font=font)
+        if box[2] - box[0] <= max_width:
+            return font, box
+    raise ValueError(
+        "Caption does not fit above the rendered map; shorten its title or date."
+    )
 
 
 def _crop_contains_source_bottom_right(
@@ -792,13 +839,78 @@ def _render_legend(
     return composited, spec
 
 
+def _render_caption(
+    rendered: Image.Image,
+    prepared_caption: dict[str, str] | None,
+) -> tuple[Image.Image, dict[str, Any] | None]:
+    if prepared_caption is None:
+        return rendered, None
+
+    width, height = rendered.size
+    preferred_title_size = max(14, round(min(width, height) * 0.026))
+    padding = max(8, round(preferred_title_size * 0.6))
+    available_width = width - 2 * padding
+    if available_width <= 0:
+        raise ValueError("Caption does not fit above the rendered map.")
+
+    display_title = _legend_display_text(prepared_caption["title"])
+    display_date = _legend_display_text(prepared_caption["date"])
+    title_font, title_box = _fit_caption_font(
+        display_title,
+        available_width,
+        preferred_title_size,
+        bold=True,
+    )
+    date_font, date_box = _fit_caption_font(
+        display_date,
+        available_width,
+        max(10, round(preferred_title_size * 0.62)),
+        bold=False,
+    )
+    title_height = title_box[3] - title_box[1]
+    date_height = date_box[3] - date_box[1]
+    line_gap = max(4, round(preferred_title_size * 0.25))
+    caption_height = padding + title_height + line_gap + date_height + padding
+
+    captioned = Image.new("RGB", (width, height + caption_height), (250, 250, 248))
+    captioned.paste(rendered.convert("RGB"), (0, caption_height))
+    draw = ImageDraw.Draw(captioned)
+    title_y = padding - title_box[1]
+    draw.text(
+        (padding - title_box[0], title_y),
+        display_title,
+        font=title_font,
+        fill=(20, 20, 20),
+    )
+    date_y = padding + title_height + line_gap - date_box[1]
+    draw.text(
+        (padding - date_box[0], date_y),
+        display_date,
+        font=date_font,
+        fill=(80, 80, 80),
+    )
+    draw.line(
+        (0, caption_height - 1, width, caption_height - 1),
+        fill=(190, 190, 185),
+        width=1,
+    )
+    return captioned, {
+        "title": prepared_caption["title"],
+        "date": prepared_caption["date"],
+        "placement": "top",
+        "height_px": caption_height,
+    }
+
+
 def _render_map(
     events: list[MapEvent],
     crop_to_drawn_area: bool = False,
     crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
     legend: MapLegend | None = None,
+    caption: MapCaption | None = None,
 ) -> tuple[bytes, dict[str, Any], list[str], int]:
     prepared_legend = _prepare_legend(legend)
+    prepared_caption = _prepare_caption(caption)
     standard_path, standard_size = MAP_SOURCES[0]
     if not standard_path.is_file():
         raise FileNotFoundError(f"Base map not found at {standard_path}.")
@@ -974,16 +1086,19 @@ def _render_map(
         _crop_contains_source_bottom_right(crop, source_size),
     )
 
+    map_width, map_height = rendered.size
     minimum_long_edge_satisfied = (
-        max(rendered.width, rendered.height) >= MINIMUM_CROP_LONG_EDGE_PX
+        max(map_width, map_height) >= MINIMUM_CROP_LONG_EDGE_PX
     )
     if crop_applied and not minimum_long_edge_satisfied:
         warnings.append(
-            f"Crop long edge is {max(rendered.width, rendered.height)} pixels at "
+            f"Crop long edge is {max(map_width, map_height)} pixels at "
             "the largest available map source, below the "
             f"{MINIMUM_CROP_LONG_EDGE_PX}-pixel target."
         )
 
+    rendered, caption_spec = _render_caption(rendered, prepared_caption)
+    caption_height = caption_spec["height_px"] if caption_spec is not None else 0
     output = BytesIO()
     rendered.save(output, format="PNG", optimize=True)
     spec = {
@@ -1012,6 +1127,13 @@ def _render_map(
         },
         "width": rendered.width,
         "height": rendered.height,
+        "map_viewport": {
+            "x": 0,
+            "y": caption_height,
+            "width": map_width,
+            "height": map_height,
+        },
+        "caption": caption_spec,
         "legend": legend_spec,
         "events": [
             {
@@ -1036,6 +1158,7 @@ async def plot_usgs_feed_on_map(
     artifact_name: str = DEFAULT_MAP_ARTIFACT,
     crop_to_drawn_area: bool = False,
     crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
+    caption: MapCaption | None = None,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """Plot a stored USGS catalog without putting its events in model context.
@@ -1052,6 +1175,7 @@ async def plot_usgs_feed_on_map(
         crop_to_drawn_area: Crop to the filtered events instead of keeping the
             full-world view.
         crop_padding_px: Context to retain around drawn content when cropping.
+        caption: Optional title and date rendered above the map.
 
     Returns:
         Compact catalog provenance and versioned map artifact handles. Event
@@ -1154,6 +1278,7 @@ async def plot_usgs_feed_on_map(
             crop_to_drawn_area=crop_to_drawn_area,
             crop_padding_px=crop_padding_px,
             legend=DENSE_MAP_MAGNITUDE_LEGEND,
+            caption=caption,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         return {"status": "error", "error": str(exc), **provenance}
@@ -1191,6 +1316,7 @@ async def plot_usgs_feed_on_map(
                 "event_count": rendered_count,
                 "cropped": spec["crop"]["applied"],
                 "legend_item_count": len(spec["legend"]["items"]),
+                "captioned": spec["caption"] is not None,
                 "catalog_artifact": ARTIFACT_NAMES[feed],
                 "catalog_version": selected_version,
             },
@@ -1223,6 +1349,8 @@ async def plot_usgs_feed_on_map(
         "crop": spec["crop"],
         "bounds": spec["bounds"],
         "source_map": spec["source"]["artifact"],
+        "map_viewport": spec["map_viewport"],
+        "caption": spec["caption"],
         "legend": spec["legend"],
         "rendered_count": rendered_count,
         "skipped_count": render_skipped,
@@ -1236,6 +1364,7 @@ async def plot_data_points_on_map(
     crop_to_drawn_area: bool = False,
     crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
     legend: MapLegend | None = None,
+    caption: MapCaption | None = None,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """Render supplied event circles onto the immutable canonical world map.
@@ -1250,6 +1379,7 @@ async def plot_data_points_on_map(
             The full-world map remains the default.
         crop_padding_px: Context to retain around drawn content when cropping.
         legend: Optional ordered color keys and heading supplied by the agent.
+        caption: Optional title and date rendered above the map.
 
     Returns:
         Versioned PNG and map-spec artifact handles, dimensions, counts, and
@@ -1282,6 +1412,7 @@ async def plot_data_points_on_map(
             crop_to_drawn_area=crop_to_drawn_area,
             crop_padding_px=crop_padding_px,
             legend=legend,
+            caption=caption,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         return {"status": "error", "error": str(exc)}
@@ -1298,6 +1429,7 @@ async def plot_data_points_on_map(
                 "legend_item_count": len(spec["legend"]["items"])
                 if spec["legend"] is not None
                 else 0,
+                "captioned": spec["caption"] is not None,
             },
         )
         spec_version = await tool_context.save_artifact(
@@ -1326,6 +1458,8 @@ async def plot_data_points_on_map(
         "crop": spec["crop"],
         "bounds": spec["bounds"],
         "source_map": spec["source"]["artifact"],
+        "map_viewport": spec["map_viewport"],
+        "caption": spec["caption"],
         "legend": spec["legend"],
         "rendered_count": len(spec["events"]),
         "skipped_count": skipped,

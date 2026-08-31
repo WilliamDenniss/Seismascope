@@ -16,6 +16,7 @@ import quake_agent.tools.map_tools as map_tools
 from quake_agent.tools.map_tools import DENSE_MAP_MAGNITUDE_LEGEND
 from quake_agent.tools.map_tools import MAP_SOURCES
 from quake_agent.tools.map_tools import MINIMUM_CROP_LONG_EDGE_PX
+from quake_agent.tools.map_tools import MapCaption
 from quake_agent.tools.map_tools import MapEvent
 from quake_agent.tools.map_tools import MapLegend
 from quake_agent.tools.map_tools import MapLegendItem
@@ -78,7 +79,7 @@ def test_threshold_arguments_are_not_exposed_by_the_renderer() -> None:
     assert "two_x_crop_threshold_percent" not in parameters
 
 
-def test_renderer_schema_exposes_optional_agent_defined_legend() -> None:
+def test_renderer_schema_exposes_optional_agent_defined_legend_and_caption() -> None:
     declaration = FunctionTool(plot_data_points_on_map)._get_declaration()
     schema = declaration.parameters_json_schema
 
@@ -87,6 +88,9 @@ def test_renderer_schema_exposes_optional_agent_defined_legend() -> None:
     assert schema["properties"]["legend"]["default"] is None
     assert schema["$defs"]["MapLegend"]["required"] == ["items"]
     assert schema["$defs"]["MapLegendItem"]["required"] == ["label", "color"]
+    assert "caption" not in schema["required"]
+    assert schema["properties"]["caption"]["default"] is None
+    assert schema["$defs"]["MapCaption"]["required"] == ["title", "date"]
 
 
 def test_catalog_renderer_schema_never_accepts_model_supplied_events() -> None:
@@ -98,6 +102,7 @@ def test_catalog_renderer_schema_never_accepts_model_supplied_events() -> None:
     assert "artifact_version" in schema["properties"]
     assert "events" not in schema["properties"]
     assert "legend" not in schema["properties"]
+    assert "caption" in schema["properties"]
 
 
 async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(
@@ -141,6 +146,10 @@ async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(
     rendered = await plot_usgs_feed_on_map(
         "monthly",
         artifact_version=catalog_version,
+        caption=MapCaption(
+            title="Worldwide Earthquakes",
+            date="As of August 31, 2026",
+        ),
         tool_context=artifact_context,
     )
 
@@ -156,7 +165,15 @@ async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(
     )
     assert map_part.inline_data is not None
     with Image.open(BytesIO(bytes(map_part.inline_data.data))) as image:
-        assert image.size == (2048, 2048)
+        assert image.size == (rendered["width"], rendered["height"])
+        assert rendered["width"] == 2048
+        assert rendered["height"] > 2048
+        assert rendered["map_viewport"] == {
+            "x": 0,
+            "y": rendered["caption"]["height_px"],
+            "width": 2048,
+            "height": 2048,
+        }
 
     spec_part = await artifact_context.load_artifact(
         rendered["spec_artifact_name"],
@@ -168,6 +185,7 @@ async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(
     assert len(spec_bytes) < 20_000
     assert spec["event_count"] == event_count
     assert spec["events"] == []
+    assert spec["caption"] == rendered["caption"]
     assert spec["event_source"]["catalog_artifact_version"] == catalog_version
     assert spec["event_source"]["style"] == {
         "color": "magnitude_bins",
@@ -391,6 +409,95 @@ async def test_saved_legend_survives_a_follow_up_revision(artifact_context) -> N
     assert first["legend"] == revised["legend"]
     assert revised["map_artifact_version"] == 1
     assert revised["spec_artifact_version"] == 1
+
+
+async def test_render_embeds_and_persists_caption_without_changing_map_viewport(
+    artifact_context,
+) -> None:
+    events = [
+        MapEvent(
+            coord=[-122.3, 37.8],
+            label="California",
+            latitude_radius=2,
+            color="#f97316",
+        )
+    ]
+    plain = await plot_data_points_on_map(
+        events,
+        artifact_name="caption-map.png",
+        crop_to_drawn_area=True,
+        crop_padding_px=48,
+        tool_context=artifact_context,
+    )
+    captioned = await plot_data_points_on_map(
+        events,
+        artifact_name="caption-map.png",
+        crop_to_drawn_area=True,
+        crop_padding_px=48,
+        caption=MapCaption(
+            title="Northern California Earthquakes",
+            date="August 31, 2026",
+        ),
+        tool_context=artifact_context,
+    )
+
+    assert plain["caption"] is None
+    assert plain["map_viewport"] == {
+        "x": 0,
+        "y": 0,
+        "width": plain["width"],
+        "height": plain["height"],
+    }
+    assert captioned["caption"] == {
+        "title": "Northern California Earthquakes",
+        "date": "August 31, 2026",
+        "placement": "top",
+        "height_px": captioned["map_viewport"]["y"],
+    }
+    assert captioned["width"] == plain["width"]
+    assert captioned["height"] == (
+        plain["height"] + captioned["caption"]["height_px"]
+    )
+    assert captioned["map_viewport"] == {
+        "x": 0,
+        "y": captioned["caption"]["height_px"],
+        "width": plain["width"],
+        "height": plain["height"],
+    }
+    assert captioned["bounds"] == plain["bounds"]
+    assert captioned["crop"] == plain["crop"]
+
+    loaded = await load_current_map_spec(tool_context=artifact_context)
+    assert loaded["spec"]["caption"] == captioned["caption"]
+    assert loaded["spec"]["map_viewport"] == captioned["map_viewport"]
+    map_part = await artifact_context.load_artifact("caption-map.png", version=1)
+    assert map_part.inline_data is not None
+    with Image.open(BytesIO(bytes(map_part.inline_data.data))) as image:
+        assert image.size == (captioned["width"], captioned["height"])
+
+
+async def test_saved_caption_can_be_preserved_in_a_follow_up_revision(
+    artifact_context,
+) -> None:
+    first = await plot_data_points_on_map(
+        [MapEvent(coord=[0, 0], label="Equator", latitude_radius=2, color="red")],
+        caption=MapCaption(title="Equatorial Earthquakes", date="August 2026"),
+        tool_context=artifact_context,
+    )
+    loaded = await load_current_map_spec(tool_context=artifact_context)
+    saved_caption = loaded["spec"]["caption"]
+
+    revised = await plot_data_points_on_map(
+        [MapEvent(**loaded["spec"]["events"][0])],
+        caption=MapCaption(
+            title=saved_caption["title"],
+            date=saved_caption["date"],
+        ),
+        tool_context=artifact_context,
+    )
+
+    assert revised["caption"]["title"] == first["caption"]["title"]
+    assert revised["caption"]["date"] == first["caption"]["date"]
 
 
 async def test_state_and_artifacts_survive_new_file_service_instance(tmp_path: Path) -> None:
@@ -733,6 +840,45 @@ async def test_invalid_or_oversized_legend_does_not_save_artifacts(
     rendered = await plot_data_points_on_map(
         [MapEvent(coord=[0, 0], label="", latitude_radius=2, color="red")],
         legend=legend,
+        tool_context=artifact_context,
+    )
+
+    assert rendered["status"] == "error"
+    assert error_fragment in rendered["error"]
+    assert await artifact_context.list_versions("earthquake-map.png") == []
+    assert await artifact_context.list_versions("earthquake-map-spec.json") == []
+
+
+@pytest.mark.parametrize(
+    ("caption", "crop_to_drawn_area", "error_fragment"),
+    [
+        (
+            MapCaption(title="   ", date="August 31, 2026"),
+            False,
+            "caption.title must be non-blank",
+        ),
+        (
+            MapCaption(title="Earthquakes\nWorldwide", date="August 31, 2026"),
+            False,
+            "must each be a single line",
+        ),
+        (
+            MapCaption(title="M" * 120, date="August 31, 2026"),
+            True,
+            "does not fit above the rendered map",
+        ),
+    ],
+)
+async def test_invalid_or_oversized_caption_does_not_save_artifacts(
+    artifact_context,
+    caption: MapCaption,
+    crop_to_drawn_area: bool,
+    error_fragment: str,
+) -> None:
+    rendered = await plot_data_points_on_map(
+        [MapEvent(coord=[0, 0], label="", latitude_radius=2, color="red")],
+        crop_to_drawn_area=crop_to_drawn_area,
+        caption=caption,
         tool_context=artifact_context,
     )
 
