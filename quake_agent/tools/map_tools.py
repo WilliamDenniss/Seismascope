@@ -299,6 +299,14 @@ def _load_legend_font(size: int) -> ImageFont.ImageFont:
         return ImageFont.load_default(size=size)
 
 
+def _annotation_font_size(image_size: tuple[int, int]) -> int:
+    return max(10, round(min(image_size) * 0.018))
+
+
+def _load_label_font(size: int = 10) -> ImageFont.ImageFont:
+    return ImageFont.load_default(size=size)
+
+
 def _legend_display_text(value: str) -> str:
     """Replace common unsupported punctuation in Pillow's bundled font."""
     return value.translate(_LEGEND_TEXT_TRANSLATION)
@@ -328,8 +336,8 @@ def _label_candidates(
     radius: float,
     text_width: int,
     text_height: int,
+    gap: int = 7,
 ) -> list[tuple[float, float]]:
-    gap = 7
     return [
         (x + radius + gap, y - text_height - gap),
         (x + radius + gap, y + gap),
@@ -352,6 +360,44 @@ def _boxes_overlap(
         or left[3] <= right[1]
         or right[3] <= left[1]
     )
+
+
+def _choose_label_position(
+    x_positions: list[float],
+    y: float,
+    radius: float,
+    text_size: tuple[int, int],
+    image_size: tuple[int, int],
+    occupied: list[tuple[float, float, float, float]],
+    gap: int = 7,
+) -> tuple[
+    tuple[float, float] | None,
+    tuple[float, float, float, float] | None,
+]:
+    text_width, text_height = text_size
+    image_width, image_height = image_size
+    for x_position in x_positions:
+        for candidate in _label_candidates(
+            x_position,
+            y,
+            radius,
+            text_width,
+            text_height,
+            gap,
+        ):
+            x, candidate_y = candidate
+            box = (x, candidate_y, x + text_width, candidate_y + text_height)
+            if (
+                x < 0
+                or candidate_y < 0
+                or box[2] > image_width
+                or box[3] > image_height
+            ):
+                continue
+            if any(_boxes_overlap(box, prior) for prior in occupied):
+                continue
+            return candidate, box
+    return None, None
 
 
 def _content_crop(
@@ -521,6 +567,7 @@ def _render_scaled_crop(
     placed_labels: list[dict[str, Any]],
     standard_crop: dict[str, int | bool],
     source: MapSource,
+    warnings: list[str],
 ) -> tuple[Image.Image, dict[str, int | bool], Image.Image]:
     source_path, source_size = source
     scale = _map_source_scale(source)
@@ -559,30 +606,50 @@ def _render_scaled_crop(
                 width=outline_width,
             )
 
-    font = ImageFont.load_default(size=10 * scale)
+    font_size = _annotation_font_size(base.size)
+    font = _load_label_font(font_size)
+    label_stroke_width = max(2, round(font_size / 10))
+    label_gap = max(7, round(font_size * 0.7))
+    occupied_labels: list[tuple[float, float, float, float]] = []
+    prepared_by_index = {item["index"]: item for item in prepared}
     for placed in placed_labels:
+        item = prepared_by_index[placed["index"]]
         text_box = draw.textbbox(
-            (0, 0), placed["label"], font=font, stroke_width=outline_width
+            (0, 0), placed["label"], font=font, stroke_width=label_stroke_width
         )
         text_width = text_box[2] - text_box[0]
-        full_x = placed["x"] * scale
-        candidates = _viewport_x_positions(
-            full_x,
-            text_width,
+        text_height = text_box[3] - text_box[1]
+        center_y = item["y"] * scale - crop_y
+        centers = _viewport_x_positions(
+            item["x"] * scale,
+            item["radius_px"] * scale,
             crop_x,
             crop_width,
             source_size[0],
         )
-        if not candidates:
+        chosen, chosen_box = _choose_label_position(
+            centers,
+            center_y,
+            item["radius_px"] * scale,
+            (text_width, text_height),
+            base.size,
+            occupied_labels,
+            label_gap,
+        )
+        if chosen is None or chosen_box is None:
+            warnings.append(
+                f"Label for event {item['index']} could not be placed at final resolution."
+            )
             continue
         draw.text(
-            (candidates[0], placed["y"] * scale - crop_y),
+            chosen,
             placed["label"],
             font=font,
             fill=(20, 20, 20, 255),
-            stroke_width=outline_width,
+            stroke_width=label_stroke_width,
             stroke_fill=(255, 255, 255, 235),
         )
+        occupied_labels.append(chosen_box)
     rendered = Image.alpha_composite(base, content_overlay).convert("RGB")
     return rendered, scaled_crop, content_overlay
 
@@ -597,10 +664,7 @@ def _render_legend(
         return rendered, None
 
     width, height = rendered.size
-    font_size = max(
-        10,
-        round(min(width, height) * 0.018),
-    )
+    font_size = _annotation_font_size(rendered.size)
     font = _load_legend_font(font_size)
     measure = ImageDraw.Draw(Image.new("RGBA", (1, 1)))
     padding = max(4, round(font_size * 0.5))
@@ -749,7 +813,7 @@ def _render_map(
     width, height = image.size
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
-    font = ImageFont.load_default()
+    font = _load_label_font()
     warnings: list[str] = []
     prepared: list[dict[str, Any]] = []
     skipped = 0
@@ -841,24 +905,14 @@ def _render_map(
         text_box = draw.textbbox((0, 0), label, font=font, stroke_width=2)
         text_width = text_box[2] - text_box[0]
         text_height = text_box[3] - text_box[1]
-        chosen: tuple[float, float] | None = None
-        chosen_box: tuple[float, float, float, float] | None = None
-        for candidate in _label_candidates(
-            label_x,
+        chosen, chosen_box = _choose_label_position(
+            [label_x],
             item["y"],
             item["radius_px"],
-            text_width,
-            text_height,
-        ):
-            x, y = candidate
-            candidate_box = (x, y, x + text_width, y + text_height)
-            if x < 0 or y < 0 or candidate_box[2] > width or candidate_box[3] > height:
-                continue
-            if any(_boxes_overlap(candidate_box, prior) for prior in occupied_labels):
-                continue
-            chosen = candidate
-            chosen_box = candidate_box
-            break
+            (text_width, text_height),
+            (width, height),
+            occupied_labels,
+        )
         if chosen is None or chosen_box is None:
             warnings.append(f"Label for event {item['index']} could not be placed.")
             continue
@@ -871,7 +925,7 @@ def _render_map(
             stroke_fill=(255, 255, 255, 235),
         )
         occupied_labels.append(chosen_box)
-        placed_labels.append({"label": label, "x": chosen[0], "y": chosen[1]})
+        placed_labels.append({"index": item["index"], "label": label})
 
     rendered = Image.alpha_composite(image, overlay).convert("RGB")
     content_overlay = overlay
@@ -908,6 +962,7 @@ def _render_map(
             placed_labels,
             crop,
             selected_source,
+            warnings,
         )
         width, height = source_size
         source_padding_px = crop_padding_px * source_scale

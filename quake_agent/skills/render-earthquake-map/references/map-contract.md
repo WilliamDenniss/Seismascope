@@ -28,7 +28,8 @@ only magnitude 6+ events.
 Colors may be Pillow-compatible names, hex values, or RGBA values. Circles are
 translucent with opaque outlines. Smaller circles are drawn first so larger
 circles appear on top; circles wrap across the antimeridian, and labels use
-deterministic collision-aware placement.
+deterministic collision-aware placement. Label typography and spacing are
+sized from the final rendered canvas rather than the selected base-map scale.
 
 When colors communicate categories or ranges, the agent can supply an explicit
 legend alongside the events:

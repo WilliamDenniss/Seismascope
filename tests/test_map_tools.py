@@ -531,6 +531,42 @@ async def test_legend_does_not_change_scaled_antimeridian_crop(
     assert font_sizes == [10]
 
 
+async def test_scaled_crop_normalizes_label_size_to_final_canvas(
+    artifact_context,
+    monkeypatch,
+) -> None:
+    font_sizes: list[int] = []
+    load_label_font = map_tools._load_label_font
+
+    def track_label_font_size(size: int = 10):
+        font_sizes.append(size)
+        return load_label_font(size)
+
+    monkeypatch.setattr(map_tools, "_load_label_font", track_label_font_size)
+    rendered = await plot_data_points_on_map(
+        [
+            MapEvent(
+                coord=[179.5, 0],
+                label="Antimeridian event",
+                latitude_radius=4,
+                color="royalblue",
+            )
+        ],
+        crop_to_drawn_area=True,
+        crop_padding_px=8,
+        tool_context=artifact_context,
+    )
+
+    expected_final_size = map_tools._annotation_font_size(
+        (rendered["width"], rendered["height"])
+    )
+    assert rendered["source_map"] == "static/world_map_4x.png"
+    assert rendered["crop"]["wraps_antimeridian"] is True
+    assert font_sizes == [10, expected_final_size]
+    assert expected_final_size < 40
+    assert not any("final resolution" in warning for warning in rendered["warnings"])
+
+
 async def test_crop_uses_two_x_map_when_it_reaches_minimum_long_edge(
     artifact_context,
 ) -> None:
