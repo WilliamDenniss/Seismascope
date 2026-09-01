@@ -222,6 +222,10 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert "selected.splice(featuredPosition, 0, featuredPrompt);" in page.text
     assert "renderExamplePrompts();" in page.text
     assert 'new URLSearchParams(window.location.hash.slice(1)).get("q")' in page.text
+    assert 'typeof crypto.randomUUID === "function"' in page.text
+    assert "crypto.getRandomValues(new Uint8Array(16))" in page.text
+    assert "value = createUuid();" in page.text
+    assert "sessionStorage.setItem(sessionKey, createUuid());" in page.text
     assert "rememberFirstPrompt(cleanText);" in page.text
     assert 'window.history.pushState(null, "", url);' in page.text
     assert 'window.addEventListener("popstate"' in page.text
