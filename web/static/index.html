@@ -306,7 +306,7 @@
           <img class="mark" src="/favicon.svg" alt="">
           <div>
             <h1>Quake Agent</h1>
-            <p class="tagline">Explore current USGS earthquake data and build maps</p>
+            <p class="tagline">Explore current and historical USGS earthquake data</p>
           </div>
         </div>
         <button id="new-conversation" class="secondary" type="button">New conversation</button>
@@ -314,15 +314,15 @@
 
       <section id="conversation" class="conversation" aria-live="polite">
         <div id="welcome" class="welcome">
-          <h2>See recent earthquakes in context.</h2>
-          <p>Ask about the official hourly or monthly USGS feed. Quake Agent can filter events, compare observations, and draw versioned maps.</p>
+          <h2>See earthquakes in context.</h2>
+          <p>Ask about official USGS realtime feeds or bounded historical searches. Quake Agent can filter events, compare observations, and draw versioned maps.</p>
           <div id="example-prompts" class="prompts"></div>
         </div>
       </section>
 
       <form id="composer" class="composer">
         <div class="composer-row">
-          <textarea id="prompt" rows="1" placeholder="Ask about recent earthquakes…" aria-label="Message Quake Agent" required></textarea>
+          <textarea id="prompt" rows="1" placeholder="Ask about earthquakes…" aria-label="Message Quake Agent" required></textarea>
           <button id="send" class="send" type="submit" aria-label="Send message">↑</button>
         </div>
         <p class="fine-print">Temporary public demo. Do not submit sensitive data. Observations are not earthquake predictions or hazard advice.</p>
@@ -337,6 +337,7 @@
     <script id="example-prompt-bank" type="application/json">
       [
         "Show me a map of all earthquakes in the last month.",
+        "Give me a map of all earthquakes of magnitude 5 or greater within a 100 km radius of Tokyo during the last five years.",
         "Map all earthquakes in the hourly USGS feed on a full-world view.",
         "Map hourly earthquakes of magnitude 2 or greater. Label each event and color shallow earthquakes green and deeper ones purple, with a legend.",
         "Map magnitude 5+ earthquakes from the monthly USGS feed worldwide.",

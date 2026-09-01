@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import httpx
@@ -8,8 +9,11 @@ import pytest
 from quake_agent.tools import data_tools
 from quake_agent.tools.data_tools import FeedDownloadError
 from quake_agent.tools.data_tools import GeoBounds
+from quake_agent.tools.data_tools import SearchCircle
 from quake_agent.tools.data_tools import download_usgs_feed
 from quake_agent.tools.data_tools import query_usgs_feed
+from quake_agent.tools.data_tools import query_usgs_search
+from quake_agent.tools.data_tools import search_usgs_events
 
 
 FIXTURE = Path(__file__).parent / "fixtures" / "usgs-sample.geojson"
@@ -195,3 +199,234 @@ async def test_query_rejects_bad_limits_times_and_missing_catalog(
     assert "download_usgs_feed" in missing["error"]
     assert bad_limit["status"] == "error"
     assert bad_time["status"] == "error"
+
+
+async def test_historical_search_builds_exact_circle_query_and_reuses_cache(
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_context,
+    catalog_bytes: bytes,
+) -> None:
+    count_calls: list[dict[str, object]] = []
+    query_calls: list[tuple[str, dict[str, object]]] = []
+
+    async def fake_count(params: dict[str, object]) -> int:
+        count_calls.append(params)
+        return 7
+
+    async def fake_fetch(
+        url: str, *, params: dict[str, object] | None = None
+    ) -> bytes:
+        assert params is not None
+        query_calls.append((url, params))
+        return catalog_bytes
+
+    monkeypatch.setattr(data_tools, "_fetch_usgs_count", fake_count)
+    monkeypatch.setattr(data_tools, "_fetch_usgs_bytes", fake_fetch)
+    circle = SearchCircle(
+        latitude=35.6762,
+        longitude=139.6503,
+        max_radius_km=100,
+    )
+
+    first = await search_usgs_events(
+        "2021-08-31",
+        "2026-08-31T12:30:00+09:00",
+        min_magnitude=5,
+        circle=circle,
+        tool_context=artifact_context,
+    )
+    second = await search_usgs_events(
+        "2021-08-31T00:00:00Z",
+        "2026-08-31T03:30:00Z",
+        min_magnitude=5.0,
+        circle=circle,
+        tool_context=artifact_context,
+    )
+
+    expected_base = {
+        "format": "geojson",
+        "starttime": "2021-08-31T00:00:00Z",
+        "endtime": "2026-08-31T03:30:00Z",
+        "eventtype": "earthquake",
+        "minmagnitude": 5.0,
+        "latitude": 35.6762,
+        "longitude": 139.6503,
+        "maxradiuskm": 100.0,
+    }
+    assert count_calls == [expected_base]
+    assert query_calls == [
+        (
+            data_tools.USGS_EVENT_QUERY_URL,
+            {**expected_base, "limit": 7, "orderby": "magnitude"},
+        )
+    ]
+    assert first["status"] == "ok"
+    assert first["artifact_name"] == "usgs-search.geojson"
+    assert first["artifact_version"] == 0
+    assert first["cached"] is False
+    assert first["truncated"] is False
+    assert second["artifact_version"] == 0
+    assert second["cached"] is True
+
+    part = await artifact_context.load_artifact("usgs-search.geojson", version=0)
+    assert part.inline_data is not None
+    stored = json.loads(bytes(part.inline_data.data))
+    provenance = stored[data_tools.SEARCH_PROVENANCE_KEY]
+    assert provenance["kind"] == "usgs_event_search"
+    assert provenance["query"]["circle"] == circle.model_dump()
+    assert provenance["total_matched"] == 7
+    assert provenance["stored_count"] == 7
+
+
+async def test_historical_search_truncates_strongest_and_supports_listing(
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_context,
+    catalog_bytes: bytes,
+) -> None:
+    query_params: dict[str, object] = {}
+
+    async def fake_count(params: dict[str, object]) -> int:
+        assert {"latitude", "longitude", "maxradiuskm"}.isdisjoint(params)
+        return 20_001
+
+    async def fake_fetch(
+        url: str, *, params: dict[str, object] | None = None
+    ) -> bytes:
+        assert params is not None
+        query_params.update(params)
+        return catalog_bytes
+
+    monkeypatch.setattr(data_tools, "_fetch_usgs_count", fake_count)
+    monkeypatch.setattr(data_tools, "_fetch_usgs_bytes", fake_fetch)
+
+    searched = await search_usgs_events(
+        "2020-01-01",
+        "2025-01-01",
+        min_magnitude=3,
+        tool_context=artifact_context,
+    )
+    listed = await query_usgs_search(
+        searched["artifact_version"],
+        min_magnitude=5,
+        sort="magnitude_desc",
+        limit=10,
+        tool_context=artifact_context,
+    )
+
+    assert query_params["limit"] == 20_000
+    assert query_params["orderby"] == "magnitude"
+    assert searched["truncated"] is True
+    assert "strongest 7 of 20,001 matches" in searched["truncation_notice"]
+    assert listed["truncated"] is True
+    assert listed["truncation_notice"] == searched["truncation_notice"]
+    assert [event["id"] for event in listed["events"]] == ["event-2"]
+
+
+async def test_historical_search_empty_result_has_no_artifact(
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_context,
+) -> None:
+    calls = 0
+
+    async def fake_count(params: dict[str, object]) -> int:
+        nonlocal calls
+        calls += 1
+        return 0
+
+    monkeypatch.setattr(data_tools, "_fetch_usgs_count", fake_count)
+    first = await search_usgs_events(
+        "1900-01-01", "1901-01-01", tool_context=artifact_context
+    )
+    second = await search_usgs_events(
+        "1900-01-01T00:00:00Z",
+        "1901-01-01T00:00:00Z",
+        tool_context=artifact_context,
+    )
+
+    assert first["status"] == "empty"
+    assert second["status"] == "empty"
+    assert second["cached"] is True
+    assert calls == 1
+    assert artifact_context.state["catalog_search_version"] is None
+    assert await artifact_context.list_versions("usgs-search.geojson") == []
+
+
+async def test_historical_search_stale_fallback_isolated_by_query(
+    monkeypatch: pytest.MonkeyPatch,
+    artifact_context,
+    catalog_bytes: bytes,
+) -> None:
+    async def successful_count(params: dict[str, object]) -> int:
+        return 7
+
+    async def successful_fetch(
+        url: str, *, params: dict[str, object] | None = None
+    ) -> bytes:
+        return catalog_bytes
+
+    monkeypatch.setattr(data_tools, "_fetch_usgs_count", successful_count)
+    monkeypatch.setattr(data_tools, "_fetch_usgs_bytes", successful_fetch)
+    await search_usgs_events(
+        "2020-01-01", "2021-01-01", tool_context=artifact_context
+    )
+
+    async def failed_count(params: dict[str, object]) -> int:
+        raise FeedDownloadError("count unavailable")
+
+    monkeypatch.setattr(data_tools, "_fetch_usgs_count", failed_count)
+    identical = await search_usgs_events(
+        "2020-01-01",
+        "2021-01-01",
+        force_refresh=True,
+        tool_context=artifact_context,
+    )
+    different = await search_usgs_events(
+        "2020-01-01",
+        "2022-01-01",
+        force_refresh=True,
+        tool_context=artifact_context,
+    )
+
+    assert identical["status"] == "ok"
+    assert identical["stale"] is True
+    assert "count unavailable" in identical["refresh_error"]
+    assert different["status"] == "error"
+    assert different["stale"] is False
+
+
+async def test_historical_search_rejects_invalid_inputs_and_missing_catalog(
+    artifact_context,
+) -> None:
+    bad_start = await search_usgs_events(
+        "last year", "2025-01-01", tool_context=artifact_context
+    )
+    reversed_range = await search_usgs_events(
+        "2025-01-02", "2025-01-01", tool_context=artifact_context
+    )
+    bad_magnitude = await search_usgs_events(
+        "2025-01-01",
+        "2025-01-02",
+        min_magnitude=float("nan"),
+        tool_context=artifact_context,
+    )
+    missing = await query_usgs_search(tool_context=artifact_context)
+
+    assert bad_start["status"] == "error"
+    assert reversed_range["status"] == "error"
+    assert bad_magnitude["status"] == "error"
+    assert missing["status"] == "error"
+    with pytest.raises(ValueError):
+        SearchCircle(latitude=0, longitude=0, max_radius_km=0)
+
+
+def test_usgs_count_validation_rejects_invalid_and_oversized_payloads(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    assert data_tools._parse_usgs_count(b'{"count":12,"maxAllowed":20000}') == 12
+    with pytest.raises(FeedDownloadError, match="valid JSON"):
+        data_tools._parse_usgs_count(b"not-json")
+    with pytest.raises(FeedDownloadError, match="valid event count"):
+        data_tools._parse_usgs_count(b'{"count":true}')
+    monkeypatch.setattr(data_tools, "MAX_COUNT_RESPONSE_BYTES", 4)
+    with pytest.raises(FeedDownloadError, match="exceeds"):
+        data_tools._parse_usgs_count(b'{"count":0}')

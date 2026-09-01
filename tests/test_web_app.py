@@ -169,6 +169,8 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert "Quake Agent" in favicon.text
     assert "#67d4c0" in favicon.text
     assert "Quake Agent" in page.text
+    assert "current and historical USGS earthquake data" in page.text
+    assert "bounded historical searches" in page.text
     assert "artifactDelta" in page.text
     assert "inlineData" in page.text
     assert "event.errorMessage" in page.text
@@ -205,9 +207,10 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert prompt_bank_match is not None
     prompt_bank = json.loads(prompt_bank_match.group(1))
     featured_prompt = "Show me a map of all earthquakes in the last month."
-    assert len(prompt_bank) == 33
-    assert len(set(prompt_bank)) == 33
+    assert len(prompt_bank) == 34
+    assert len(set(prompt_bank)) == 34
     assert {
+        "Give me a map of all earthquakes of magnitude 5 or greater within a 100 km radius of Tokyo during the last five years.",
         "Map the largest earthquake in the last month and surrounding earthquakes.",
         "Map earthquakes near 37.7775, -122.416389 in the last month.",
         "Map earthquakes near Mountain View.",

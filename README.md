@@ -1,8 +1,8 @@
 # Quake Agent
 
-A local, stateful Google ADK agent that downloads the official USGS hourly and
-monthly earthquake feeds, stores versioned snapshots, queries them, and renders
-event overlays on `static/world_map.png`.
+A local, stateful Google ADK agent that downloads official USGS realtime feeds
+and bounded historical Event API searches, stores versioned snapshots, queries
+them, and renders event overlays on `static/world_map.png`.
 
 ## Run locally with the ADK development UI
 
@@ -20,6 +20,7 @@ Example prompts:
 
 - Download the hourly feed and map earthquakes of magnitude 2 or greater.
 - Use the monthly feed and show the ten largest events.
+- Map magnitude 5+ earthquakes within 100 km of Tokyo during the last five years.
 - Keep the same circles, make the deepest events blue, and remove other labels.
 - Crop the current map to the area containing the circles, with 48 pixels of padding.
 - Refresh the hourly data and tell me whether any mapped events changed.

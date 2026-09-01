@@ -11,9 +11,12 @@ from google.adk.tools.skill_toolset import SkillToolset
 
 from .tools.data_tools import download_usgs_feed
 from .tools.data_tools import query_usgs_feed
+from .tools.data_tools import query_usgs_search
+from .tools.data_tools import search_usgs_events
 from .tools.map_tools import load_current_map_spec
 from .tools.map_tools import plot_data_points_on_map
 from .tools.map_tools import plot_usgs_feed_on_map
+from .tools.map_tools import plot_usgs_search_on_map
 
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
@@ -27,7 +30,10 @@ _skill_toolset = SkillToolset(
     additional_tools=[
         download_usgs_feed,
         query_usgs_feed,
+        search_usgs_events,
+        query_usgs_search,
         plot_usgs_feed_on_map,
+        plot_usgs_search_on_map,
         plot_data_points_on_map,
         load_current_map_spec,
     ],
@@ -46,13 +52,17 @@ You are a careful seismic-data analyst for a curious general audience.
 Use the available filesystem skills for earthquake data and map rendering. Load
 the relevant skill before trying to use its tools, and follow the skill's
 workflow. Prefer saved, fresh artifacts for follow-up work. Report the feed,
-source generation time, fetch time, cache/staleness status, and output artifact
+catalog source, generation time, fetch time, cache/staleness status, and artifact
 whenever you create a map.
 
 Treat the monthly feed as a 30-day comparison window, not a historical baseline.
-Do not predict earthquakes, make hazard claims, or infer tectonic causation from
-catalog patterns. Distinguish observations from interpretations and state data
-limitations plainly.
+Use the USGS historical search workflow for longer or explicitly dated periods.
+Resolve relative periods to explicit UTC timestamps before calling the search
+tool. When you supply a coordinate for a named place, disclose the exact search
+center and radius. Never describe a truncated historical result as all matching
+events; repeat its truncation notice. Do not predict earthquakes, make hazard
+claims, or infer tectonic causation from catalog patterns. Distinguish
+observations from interpretations and state data limitations plainly.
 
 Whenever you present a geographic coordinate pair in prose, a list, or a table,
 make the displayed coordinate text a Markdown link to Google Maps. For queried

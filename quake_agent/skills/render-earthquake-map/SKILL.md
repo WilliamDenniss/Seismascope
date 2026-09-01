@@ -4,6 +4,7 @@ description: Render a stored USGS feed or a supplied set of event circles on the
 metadata:
   adk_additional_tools:
     - plot_usgs_feed_on_map
+    - plot_usgs_search_on_map
     - plot_data_points_on_map
     - load_current_map_spec
 ---
@@ -21,6 +22,11 @@ This skill draws events; it does not decide which earthquakes are relevant.
   sizes, labels only magnitude 6+ events, and saves a compact specification that
   references the source catalog artifact. Use it for requests such as "all
   earthquakes in the last month."
+- For a full historical result, call `plot_usgs_search_on_map` with the exact
+  artifact version from `search_usgs_events`. The map specification retains the
+  Event API query provenance without serializing the event array. If the source
+  is truncated, repeat the returned warning and never describe the map as all
+  matching events.
 - For a new map, call `plot_data_points_on_map` with objects containing
   `coord`, `label`, `latitude_radius`, and `color` only when the selected event
   set is small enough to have been returned by `query_usgs_feed`.
@@ -61,6 +67,8 @@ This skill draws events; it does not decide which earthquakes are relevant.
   and revised filters; its specification intentionally does not expand the
   thousands of event objects. Preserve the saved crop request, padding, legend,
   and caption unless the user asks to change them.
+- For a catalog-backed historical map, rerun `plot_usgs_search_on_map` using its
+  saved search artifact version and revised local time or magnitude filters.
 - Report both the PNG artifact and its source-specification artifact, including
   their versions and any renderer warnings.
 

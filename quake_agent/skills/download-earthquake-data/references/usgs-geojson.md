@@ -5,6 +5,17 @@ The skill uses only these allowlisted summary feeds:
 - Hourly: `https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_hour.geojson`
 - Monthly: `https://earthquake.usgs.gov/earthquakes/feed/v1.0/summary/all_month.geojson`
 
+Historical searches use only these fixed USGS FDSN Event API endpoints:
+
+- Count: `https://earthquake.usgs.gov/fdsnws/event/1/count`
+- Query: `https://earthquake.usgs.gov/fdsnws/event/1/query`
+
+Historical searches always provide explicit UTC start and end times and may
+provide a latitude/longitude circle in kilometers. USGS limits one query to
+20,000 events; larger matches are stored as the strongest 20,000 and must be
+reported as truncated. Catalog completeness and magnitude consistency vary by
+era and region.
+
 Normalized event fields:
 
 - `id`: stable USGS event identifier within the catalog

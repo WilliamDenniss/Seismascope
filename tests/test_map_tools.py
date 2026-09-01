@@ -29,6 +29,7 @@ from quake_agent.tools.map_tools import load_current_map_spec
 from quake_agent.tools.map_tools import project_web_mercator
 from quake_agent.tools.map_tools import plot_data_points_on_map
 from quake_agent.tools.map_tools import plot_usgs_feed_on_map
+from quake_agent.tools.map_tools import plot_usgs_search_on_map
 from conftest import ArtifactContext
 
 
@@ -103,6 +104,73 @@ def test_catalog_renderer_schema_never_accepts_model_supplied_events() -> None:
     assert "events" not in schema["properties"]
     assert "legend" not in schema["properties"]
     assert "caption" in schema["properties"]
+
+    search_declaration = FunctionTool(plot_usgs_search_on_map)._get_declaration()
+    search_schema = search_declaration.parameters_json_schema
+    assert search_schema is not None
+    assert "artifact_version" in search_schema["properties"]
+    assert "events" not in search_schema["properties"]
+
+
+async def test_historical_search_renderer_preserves_provenance_and_warning(
+    artifact_context,
+) -> None:
+    catalog = json.loads(
+        (Path(__file__).parent / "fixtures" / "usgs-sample.geojson").read_text()
+    )
+    notice = "Showing the strongest 7 of 20,001 matches; the result is truncated."
+    catalog["quake_agent"] = {
+        "kind": "usgs_event_search",
+        "query_signature": "test-signature",
+        "query": {
+            "start_time": "2021-08-31T00:00:00Z",
+            "end_time": "2026-08-31T00:00:00Z",
+            "min_magnitude": 3.0,
+            "circle": {
+                "latitude": 35.6762,
+                "longitude": 139.6503,
+                "max_radius_km": 100.0,
+            },
+            "event_type": "earthquake",
+        },
+        "count_url": "https://earthquake.usgs.gov/fdsnws/event/1/count?test",
+        "query_url": "https://earthquake.usgs.gov/fdsnws/event/1/query?test",
+        "fetched_at": "2026-08-31T01:00:00Z",
+        "total_matched": 20_001,
+        "stored_count": 7,
+        "truncated": True,
+        "truncation_order": "magnitude_desc",
+        "truncation_notice": notice,
+    }
+    version = await artifact_context.save_artifact(
+        "usgs-search.geojson",
+        types.Part.from_bytes(
+            data=json.dumps(catalog).encode(), mime_type="application/geo+json"
+        ),
+    )
+    artifact_context.state["catalog_search_version"] = version
+
+    rendered = await plot_usgs_search_on_map(
+        artifact_version=version,
+        min_magnitude=3,
+        crop_to_drawn_area=True,
+        caption=MapCaption(title="Tokyo M5+", date="2021-08-31 to 2026-08-31"),
+        tool_context=artifact_context,
+    )
+
+    assert rendered["status"] == "ok"
+    assert rendered["truncated"] is True
+    assert rendered["truncation_notice"] == notice
+    assert notice in rendered["warnings"]
+    spec_part = await artifact_context.load_artifact(
+        rendered["spec_artifact_name"], version=rendered["spec_artifact_version"]
+    )
+    assert spec_part.inline_data is not None
+    spec = json.loads(bytes(spec_part.inline_data.data))
+    assert spec["events"] == []
+    assert spec["event_source"]["kind"] == "usgs_historical_search_artifact"
+    assert spec["event_source"]["query"] == catalog["quake_agent"]["query"]
+    assert spec["event_source"]["truncation_notice"] == notice
 
 
 async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(

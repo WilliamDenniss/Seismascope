@@ -19,9 +19,12 @@ def test_agent_loads_both_filesystem_skills_and_public_tool_schemas() -> None:
         "download-earthquake-data": {
             "download_usgs_feed",
             "query_usgs_feed",
+            "search_usgs_events",
+            "query_usgs_search",
         },
         "render-earthquake-map": {
             "plot_usgs_feed_on_map",
+            "plot_usgs_search_on_map",
             "plot_data_points_on_map",
             "load_current_map_spec",
         },
@@ -44,6 +47,15 @@ def test_agent_requires_google_maps_links_for_displayed_coordinates() -> None:
     assert "@<latitude>,<longitude>,6z/" in root_agent.instruction
 
 
+def test_agent_routes_historical_queries_and_discloses_truncation() -> None:
+    assert isinstance(root_agent.instruction, str)
+    assert "historical search workflow" in root_agent.instruction
+    assert "Resolve relative periods to explicit UTC timestamps" in root_agent.instruction
+    assert "disclose the exact search" in root_agent.instruction
+    assert "center and radius" in root_agent.instruction
+    assert "Never describe a truncated historical result as all" in root_agent.instruction
+
+
 async def test_activated_skills_expose_only_their_dynamic_tools() -> None:
     data_context = SimpleNamespace(
         agent_name="seismic_analyst",
@@ -64,9 +76,12 @@ async def test_activated_skills_expose_only_their_dynamic_tools() -> None:
     assert {tool.name for tool in data_tools} == {
         "download_usgs_feed",
         "query_usgs_feed",
+        "search_usgs_events",
+        "query_usgs_search",
     }
     assert {tool.name for tool in map_tools} == {
         "plot_usgs_feed_on_map",
+        "plot_usgs_search_on_map",
         "plot_data_points_on_map",
         "load_current_map_spec",
     }
