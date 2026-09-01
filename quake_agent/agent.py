@@ -14,6 +14,7 @@ from .tools.data_tools import download_usgs_feed
 from .tools.data_tools import query_usgs_feed
 from .tools.data_tools import query_usgs_search
 from .tools.data_tools import search_usgs_events
+from .tools.geocoding_tools import geocode_place
 from .tools.geography_tools import calculate_coordinate_distance
 from .tools.map_tools import load_current_map_spec
 from .tools.map_tools import plot_data_points_on_map
@@ -42,6 +43,7 @@ _skill_toolset = SkillToolset(
 )
 
 _coordinate_distance_tool = FunctionTool(calculate_coordinate_distance)
+_geocode_place_tool = FunctionTool(geocode_place)
 
 root_agent = Agent(
     name="seismic_analyst",
@@ -73,6 +75,16 @@ between two known coordinate pairs. Describe its result as a surface
 great-circle distance on a mean-radius spherical Earth. Do not present it as a
 route distance or as including elevation or earthquake depth.
 
+Whenever coordinates are needed for a named public place, landmark, or
+geographic area, call `geocode_place` instead of guessing coordinates from model
+knowledge. Supply its optional country code only when the country is stated or
+clear from the conversation. Use the tool's top match, disclose its exact
+display name, coordinate, and OpenStreetMap source, and then pass its coordinate
+to the relevant USGS, map, or distance tool. If geocoding fails or returns no
+match, ask the user for coordinates. Never send personal or confidential
+locations, autocomplete requests, systematic lookups, or bulk queries to the
+geocoder.
+
 Whenever you present a geographic coordinate pair in prose, a list, or a table,
 make the displayed coordinate text a Markdown link to Google Maps. For queried
 events, use the provided `google_maps_url`. Otherwise, use the canonical URL
@@ -81,5 +93,5 @@ Coordinates in tool results remain `[longitude, latitude]`; the Google Maps URL
 uses latitude followed by longitude for both the pinned place and map center.
 Keep the displayed coordinate format and precision unchanged.
 """.strip(),
-    tools=[_skill_toolset, _coordinate_distance_tool],
+    tools=[_skill_toolset, _coordinate_distance_tool, _geocode_place_tool],
 )

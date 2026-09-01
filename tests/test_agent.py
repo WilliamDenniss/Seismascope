@@ -6,6 +6,7 @@ from google.adk.tools import FunctionTool
 import pytest
 
 from quake_agent.agent import _coordinate_distance_tool
+from quake_agent.agent import _geocode_place_tool
 from quake_agent.agent import _skill_toolset
 from quake_agent.agent import root_agent
 
@@ -40,6 +41,9 @@ def test_agent_loads_both_filesystem_skills_and_public_tool_schemas() -> None:
     assert isinstance(_coordinate_distance_tool, FunctionTool)
     assert _coordinate_distance_tool.name == "calculate_coordinate_distance"
     assert _coordinate_distance_tool._get_declaration() is not None
+    assert isinstance(_geocode_place_tool, FunctionTool)
+    assert _geocode_place_tool.name == "geocode_place"
+    assert _geocode_place_tool._get_declaration() is not None
 
 
 def test_agent_requires_google_maps_links_for_displayed_coordinates() -> None:
@@ -56,6 +60,14 @@ def test_agent_routes_known_coordinate_distances_to_deterministic_tool() -> None
     assert "Use `calculate_coordinate_distance`" in root_agent.instruction
     assert "great-circle distance" in root_agent.instruction
     assert _coordinate_distance_tool in root_agent.tools
+
+
+def test_agent_resolves_named_places_with_geocoder_instead_of_guessing() -> None:
+    assert isinstance(root_agent.instruction, str)
+    assert "call `geocode_place` instead of guessing coordinates" in root_agent.instruction
+    assert "ask the user for coordinates" in root_agent.instruction
+    assert "personal or confidential" in root_agent.instruction
+    assert _geocode_place_tool in root_agent.tools
 
 
 def test_agent_routes_historical_queries_and_discloses_truncation() -> None:

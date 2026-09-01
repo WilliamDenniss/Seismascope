@@ -171,6 +171,8 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert "Quake Agent" in page.text
     assert "current and historical USGS earthquake data" in page.text
     assert "bounded historical searches" in page.text
+    assert "Public place names may be sent to OpenStreetMap's Nominatim" in page.text
+    assert "OpenStreetMap contributors" in page.text
     assert "artifactDelta" in page.text
     assert "inlineData" in page.text
     assert "event.errorMessage" in page.text

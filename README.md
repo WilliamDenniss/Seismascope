@@ -51,6 +51,8 @@ Runtime configuration:
   browser UI and API are hosted separately.
 - `QUAKE_AGENT_RATE_LIMIT` and `QUAKE_AGENT_RATE_WINDOW_SECONDS`: Per-process,
   per-IP prompt limit. Defaults to 10 prompts per 600 seconds.
+- `QUAKE_AGENT_GEOCODER_BASE_URL`: HTTPS base URL for the Nominatim-compatible
+  forward geocoder. Defaults to the public OpenStreetMap Nominatim service.
 - `GOOGLE_API_KEY` and `QUAKE_AGENT_MODEL`: Server-side Gemini credentials and
   model selection.
 
@@ -102,3 +104,10 @@ under the [Open Data Commons Open Database License](https://opendatacommons.org/
 
 Third-party assets remain subject to their respective licenses and attribution
 requirements; they are not relicensed under the project's Apache License 2.0.
+
+Named-place lookups use the public OpenStreetMap Nominatim service and are
+subject to its [usage policy](https://operations.osmfoundation.org/policies/nominatim/).
+The application identifies itself, caches results, serializes requests, and
+keeps aggregate traffic below one request per second. Do not submit personal or
+confidential locations. Deployments that use multiple application instances or
+higher lookup volume must configure a suitable alternative geocoder.
