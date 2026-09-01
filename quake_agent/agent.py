@@ -7,12 +7,14 @@ from pathlib import Path
 
 from google.adk import Agent
 from google.adk.skills import load_skill_from_dir
+from google.adk.tools import FunctionTool
 from google.adk.tools.skill_toolset import SkillToolset
 
 from .tools.data_tools import download_usgs_feed
 from .tools.data_tools import query_usgs_feed
 from .tools.data_tools import query_usgs_search
 from .tools.data_tools import search_usgs_events
+from .tools.geography_tools import calculate_coordinate_distance
 from .tools.map_tools import load_current_map_spec
 from .tools.map_tools import plot_data_points_on_map
 from .tools.map_tools import plot_usgs_feed_on_map
@@ -39,6 +41,8 @@ _skill_toolset = SkillToolset(
     ],
 )
 
+_coordinate_distance_tool = FunctionTool(calculate_coordinate_distance)
+
 root_agent = Agent(
     name="seismic_analyst",
     model=os.getenv("QUAKE_AGENT_MODEL", "gemini-flash-latest"),
@@ -64,6 +68,11 @@ events; repeat its truncation notice. Do not predict earthquakes, make hazard
 claims, or infer tectonic causation from catalog patterns. Distinguish
 observations from interpretations and state data limitations plainly.
 
+Use `calculate_coordinate_distance` whenever the user asks for the distance
+between two known coordinate pairs. Describe its result as a surface
+great-circle distance on a mean-radius spherical Earth. Do not present it as a
+route distance or as including elevation or earthquake depth.
+
 Whenever you present a geographic coordinate pair in prose, a list, or a table,
 make the displayed coordinate text a Markdown link to Google Maps. For queried
 events, use the provided `google_maps_url`. Otherwise, use the canonical URL
@@ -72,5 +81,5 @@ Coordinates in tool results remain `[longitude, latitude]`; the Google Maps URL
 uses latitude followed by longitude for both the pinned place and map center.
 Keep the displayed coordinate format and precision unchanged.
 """.strip(),
-    tools=[_skill_toolset],
+    tools=[_skill_toolset, _coordinate_distance_tool],
 )

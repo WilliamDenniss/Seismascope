@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from google.adk.tools import FunctionTool
 import pytest
 
+from quake_agent.agent import _coordinate_distance_tool
 from quake_agent.agent import _skill_toolset
 from quake_agent.agent import root_agent
 
@@ -36,6 +37,9 @@ def test_agent_loads_both_filesystem_skills_and_public_tool_schemas() -> None:
     for tool in _skill_toolset._provided_tools_by_name.values():
         assert isinstance(tool, FunctionTool)
         assert tool._get_declaration() is not None
+    assert isinstance(_coordinate_distance_tool, FunctionTool)
+    assert _coordinate_distance_tool.name == "calculate_coordinate_distance"
+    assert _coordinate_distance_tool._get_declaration() is not None
 
 
 def test_agent_requires_google_maps_links_for_displayed_coordinates() -> None:
@@ -45,6 +49,13 @@ def test_agent_requires_google_maps_links_for_displayed_coordinates() -> None:
     )
     assert "google_maps_url" in root_agent.instruction
     assert "@<latitude>,<longitude>,6z/" in root_agent.instruction
+
+
+def test_agent_routes_known_coordinate_distances_to_deterministic_tool() -> None:
+    assert isinstance(root_agent.instruction, str)
+    assert "Use `calculate_coordinate_distance`" in root_agent.instruction
+    assert "great-circle distance" in root_agent.instruction
+    assert _coordinate_distance_tool in root_agent.tools
 
 
 def test_agent_routes_historical_queries_and_discloses_truncation() -> None:
