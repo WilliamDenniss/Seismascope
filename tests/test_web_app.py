@@ -184,13 +184,27 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert "response.body.getReader()" in page.text
     assert "streaming: true" in page.text
     assert "event.partial === true" in page.text
-    assert "part.functionCall?.name" in page.text
-    assert "functionCall?.args" not in page.text
+    assert "functionCall?.name" in page.text
+    assert "functionCall.args" in page.text
+    assert "part.functionResponse" in page.text
+    assert "functionResponse.response" in page.text
     assert 'tools.className = "thinking-tools"' in page.text
     assert 'block.className = "thinking-tool"' in page.text
-    assert "block.textContent = name" in page.text
-    assert "thinking.isConnected" in page.text
-    assert 'document.createElement("details")' not in page.text
+    assert "trackToolEvents(toolState, event)" in page.text
+    assert "updateThinkingTools(thinking, toolState.calls)" in page.text
+    assert 'research.className = "research"' in page.text
+    assert 'label.textContent = "Research"' in page.text
+    assert "research.open" not in page.text
+    assert "research = showResearch(thinking, research, toolState, agentMessage)" in page.text
+    assert "research?.isConnected" in page.text
+    assert 'details.className = "research-call"' in page.text
+    assert "state.calls.push(call)" in page.text
+    assert "sensitiveToolKey.test(key)" in page.text
+    assert "Internal orchestration output omitted." in page.text
+    assert "rendered.length > 8_000" in page.text
+    research_marker = "research = showResearch(thinking, research, toolState, agentMessage)"
+    message_marker = 'if (!agentMessage) agentMessage = addMessage("agent", "")'
+    assert page.text.index(research_marker) < page.text.index(message_marker)
     assert 'replace(/-/g, "+").replace(/_/g, "/")' in page.text
     assert "renderMarkdown" in page.text
     assert 'link.target = "_blank"' in page.text

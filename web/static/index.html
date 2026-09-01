@@ -249,7 +249,103 @@
         line-height: 1.35;
         white-space: nowrap;
       }
+
+      .research {
+        width: min(720px, 88%);
+        margin: 0 0 9px;
+        padding: 10px 11px;
+        border: 1px solid rgba(151, 178, 207, 0.16);
+        border-radius: 12px;
+        color: var(--muted);
+        background: rgba(5, 17, 30, 0.54);
+        font-size: 14px;
+      }
+      .research > summary,
+      .research-call > summary {
+        display: flex;
+        align-items: baseline;
+        gap: 7px;
+        min-width: 0;
+        cursor: pointer;
+        list-style: none;
+      }
+      .research > summary::-webkit-details-marker,
+      .research-call > summary::-webkit-details-marker { display: none; }
+      .research > summary::after,
+      .research-call > summary::after {
+        content: "›";
+        margin-left: auto;
+        color: #6f879c;
+        transform: rotate(0deg);
+        transition: transform 120ms ease;
+      }
+      .research[open] > summary::after,
+      .research-call[open] > summary::after { transform: rotate(90deg); }
+      .research-count { color: #718ba2; font-size: 12px; }
+      .research-list {
+        display: grid;
+        gap: 5px;
+        margin: 7px 0 0;
+        padding: 0;
+        list-style: none;
+      }
+      .research-call {
+        min-width: 0;
+        padding-top: 5px;
+        border-top: 1px solid rgba(151, 178, 207, 0.12);
+      }
+      .research-call:first-child { padding-top: 0; border-top: 0; }
+      .research-status {
+        width: 14px;
+        flex: 0 0 14px;
+        color: #88a0b5;
+        text-align: center;
+      }
+      .research-call[data-status="running"] .research-status {
+        color: var(--accent);
+        animation: pulse 1.1s ease-in-out infinite;
+      }
+      .research-call[data-status="completed"] .research-status { color: var(--accent); }
+      .research-call[data-status="failed"] .research-status { color: var(--danger); }
+      .research-name {
+        flex: 0 0 auto;
+        color: #b9ddd6;
+        font: 12px/1.35 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        white-space: nowrap;
+      }
+      .research-description {
+        min-width: 0;
+        overflow: hidden;
+        color: #829bb0;
+        font-size: 12px;
+        text-overflow: ellipsis;
+        white-space: nowrap;
+      }
+      .research-details { display: grid; gap: 7px; margin: 7px 0 2px 21px; }
+      .research-details section { min-width: 0; }
+      .research-details-label {
+        display: block;
+        margin-bottom: 3px;
+        color: #7890a5;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }
+      .research-details pre {
+        max-height: 240px;
+        overflow: auto;
+        margin: 0;
+        padding: 8px 9px;
+        border-radius: 7px;
+        color: #b8cad8;
+        background: rgba(2, 9, 17, 0.7);
+        font: 11px/1.45 ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+        white-space: pre-wrap;
+        overflow-wrap: anywhere;
+      }
       @keyframes dots { 0% { content: ""; } 25% { content: "."; } 50% { content: ".."; } 75%, 100% { content: "..."; } }
+      @keyframes pulse { 0%, 100% { opacity: 0.42; } 50% { opacity: 1; } }
 
       .composer {
         padding: 13px;
@@ -295,6 +391,9 @@
         .conversation { padding: 15px; border-radius: 17px; }
         .welcome { margin-top: 4vh; }
         .bubble { max-width: 94%; }
+        .research { width: 94%; }
+        .research-call > summary { flex-wrap: wrap; }
+        .research-description { width: calc(100% - 21px); margin-left: 21px; }
         .artifact-meta { align-items: flex-start; flex-direction: column; }
       }
     </style>
@@ -717,28 +816,81 @@
           scrollToBottom();
         }
 
-        function agentEventToolNames(event) {
-          if (event.author !== "seismic_analyst" || !event.content?.parts) return [];
-          const names = [];
-          for (const part of event.content.parts) {
-            const name = part.functionCall?.name;
-            if (typeof name === "string" && name.trim()) names.push(name.trim());
+        function toolEventParts(event) {
+          if (event.author !== "seismic_analyst" || !Array.isArray(event.content?.parts)) {
+            return [];
           }
-          return names;
+          return event.content.parts;
         }
 
-        function applyStreamTools(state, event) {
+        function toolName(value) {
+          return typeof value === "string" && value.trim() ? value.trim() : null;
+        }
+
+        function toolError(response) {
+          const error = response?.error ?? response?.result?.error;
+          if (typeof error === "string" && error.trim()) return error.trim();
+          if (error && typeof error === "object") {
+            const detail = error.message || error.detail || error.code;
+            if (typeof detail === "string" && detail.trim()) return detail.trim();
+          }
+          return "";
+        }
+
+        function trackToolEvents(state, event) {
           let changed = false;
-          for (const name of agentEventToolNames(event)) {
-            if (state.seen.has(name)) continue;
-            state.seen.add(name);
-            state.names.push(name);
+          for (const part of toolEventParts(event)) {
+            const functionCall = part.functionCall;
+            const name = toolName(functionCall?.name);
+            if (name) {
+              const id = toolName(functionCall.id);
+              if (!id || !state.byId.has(id)) {
+                const call = {
+                  id,
+                  name,
+                  args: functionCall.args,
+                  response: undefined,
+                  error: "",
+                  status: "running"
+                };
+                state.calls.push(call);
+                if (id) state.byId.set(id, call);
+                changed = true;
+              }
+            }
+
+            const functionResponse = part.functionResponse;
+            const responseName = toolName(functionResponse?.name);
+            if (!responseName) continue;
+            const responseId = toolName(functionResponse.id);
+            let call = responseId ? state.byId.get(responseId) : null;
+            if (!call) {
+              call = state.calls.find((candidate) => (
+                candidate.status === "running" && candidate.name === responseName
+              ));
+            }
+            if (!call) {
+              call = {
+                id: responseId,
+                name: responseName,
+                args: undefined,
+                response: undefined,
+                error: "",
+                status: "running"
+              };
+              state.calls.push(call);
+              if (responseId) state.byId.set(responseId, call);
+            }
+            call.response = functionResponse.response;
+            call.error = toolError(call.response);
+            call.status = call.error ? "failed" : "completed";
             changed = true;
           }
           return changed;
         }
 
-        function updateThinkingTools(thinking, names) {
+        function updateThinkingTools(thinking, calls) {
+          const names = [...new Set(calls.map((call) => call.name))];
           const tools = thinking.querySelector(".thinking-tools");
           tools.replaceChildren(...names.map((name) => {
             const block = document.createElement("span");
@@ -747,6 +899,205 @@
             return block;
           }));
           scrollToBottom();
+        }
+
+        const sensitiveToolKey = /(?:api[_-]?key|authorization|cookie|password|secret|token)/i;
+        const internalToolNames = new Set(["list_skills", "load_skill"]);
+
+        function sanitizedToolValue(value, key = "", depth = 0) {
+          if (key && sensitiveToolKey.test(key)) return "[redacted]";
+          if (value === null || typeof value === "boolean" || typeof value === "number") {
+            return value;
+          }
+          if (typeof value === "string") {
+            return value.length > 400 ? `${value.slice(0, 400)}…` : value;
+          }
+          if (depth >= 3) {
+            if (Array.isArray(value)) return `[${value.length} items]`;
+            if (value && typeof value === "object") return "[nested object]";
+            return value === undefined ? "Not provided" : String(value);
+          }
+          if (Array.isArray(value)) {
+            const items = value.slice(0, 10).map((item) => (
+              sanitizedToolValue(item, "", depth + 1)
+            ));
+            if (value.length > 10) items.push(`… ${value.length - 10} more items`);
+            return items;
+          }
+          if (value && typeof value === "object") {
+            const entries = Object.entries(value);
+            const result = Object.fromEntries(entries.slice(0, 20).map(([childKey, childValue]) => (
+              [childKey, sanitizedToolValue(childValue, childKey, depth + 1)]
+            )));
+            if (entries.length > 20) result["…"] = `${entries.length - 20} more fields`;
+            return result;
+          }
+          return value === undefined ? "Not provided" : String(value);
+        }
+
+        function toolDetailText(value) {
+          const rendered = JSON.stringify(sanitizedToolValue(value), null, 2);
+          return rendered.length > 8_000
+            ? `${rendered.slice(0, 8_000)}\n… output truncated`
+            : rendered;
+        }
+
+        function unwrappedToolResponse(response) {
+          if (response && typeof response === "object" && !Array.isArray(response)) {
+            const keys = Object.keys(response);
+            if (keys.length === 1 && keys[0] === "result") return response.result;
+          }
+          return response;
+        }
+
+        function briefToolValue(value) {
+          if (value === null) return "null";
+          if (typeof value === "boolean" || typeof value === "number") return String(value);
+          if (typeof value === "string") {
+            const compact = value.replace(/\s+/g, " ").trim();
+            return compact.length > 52 ? `${compact.slice(0, 51)}…` : compact;
+          }
+          if (Array.isArray(value)) return `${value.length} items`;
+          if (value && typeof value === "object") return `${Object.keys(value).length} fields`;
+          return "";
+        }
+
+        function describeToolValue(value, preferredKeys = []) {
+          if (!value || typeof value !== "object" || Array.isArray(value)) {
+            return briefToolValue(value);
+          }
+          const entries = Object.entries(value);
+          const preferred = new Set(preferredKeys);
+          const ordered = [
+            ...preferredKeys.flatMap((key) => entries.filter(([entryKey]) => entryKey === key)),
+            ...entries.filter(([key]) => !preferred.has(key))
+          ];
+          const fields = [];
+          for (const [key, childValue] of ordered) {
+            if (sensitiveToolKey.test(key)) continue;
+            const description = briefToolValue(childValue);
+            if (description) fields.push(`${key}=${description}`);
+            if (fields.length === 3) break;
+          }
+          return fields.join(" · ");
+        }
+
+        function describeToolCall(call) {
+          const input = call.args === undefined
+            ? "input unavailable"
+            : describeToolValue(call.args) || "no arguments";
+          if (call.status === "running") return input;
+          if (call.status === "failed") return `${input} → ${briefToolValue(call.error)}`;
+          if (call.status === "unknown") return `${input} → status unavailable`;
+          if (internalToolNames.has(call.name)) return `${input} → completed`;
+          const output = describeToolValue(
+            unwrappedToolResponse(call.response),
+            ["status", "cached", "cache_hit", "returned_count", "event_count", "rendered_count", "version"]
+          );
+          return output ? `${input} → ${output}` : input;
+        }
+
+        const toolStatus = {
+          running: ["●", "Running"],
+          completed: ["✓", "Completed"],
+          failed: ["!", "Failed"],
+          unknown: ["–", "Status unavailable"]
+        };
+
+        function researchDetails(label, value) {
+          const section = document.createElement("section");
+          const heading = document.createElement("span");
+          heading.className = "research-details-label";
+          heading.textContent = label;
+          const body = document.createElement("pre");
+          body.textContent = toolDetailText(value);
+          section.append(heading, body);
+          return section;
+        }
+
+        function renderResearchCall(call) {
+          const details = document.createElement("details");
+          details.className = "research-call";
+          details.dataset.status = call.status;
+          const summary = document.createElement("summary");
+          const status = document.createElement("span");
+          status.className = "research-status";
+          status.textContent = toolStatus[call.status][0];
+          status.setAttribute("aria-label", toolStatus[call.status][1]);
+          const name = document.createElement("code");
+          name.className = "research-name";
+          name.textContent = call.name;
+          const description = document.createElement("span");
+          description.className = "research-description";
+          description.textContent = describeToolCall(call);
+          summary.append(status, name, description);
+          const content = document.createElement("div");
+          content.className = "research-details";
+          content.append(researchDetails("Input", call.args));
+          if (call.response !== undefined) {
+            const response = internalToolNames.has(call.name)
+              ? { notice: "Internal orchestration output omitted." }
+              : call.response;
+            content.append(researchDetails("Result", response));
+          }
+          details.append(summary, content);
+          return details;
+        }
+
+        function createResearch() {
+          const research = document.createElement("details");
+          research.className = "research";
+          const summary = document.createElement("summary");
+          const label = document.createElement("span");
+          label.textContent = "Research";
+          const count = document.createElement("span");
+          count.className = "research-count";
+          const calls = document.createElement("ol");
+          calls.className = "research-list";
+          summary.append(label, count);
+          research.append(summary, calls);
+          return research;
+        }
+
+        function renderResearch(research, state) {
+          const failed = state.calls.filter((call) => call.status === "failed").length;
+          const callCount = `${state.calls.length} ${state.calls.length === 1 ? "call" : "calls"}`;
+          research.querySelector(".research-count").textContent = failed
+            ? `${callCount} · ${failed} failed`
+            : callCount;
+          research.querySelector(".research-list").replaceChildren(
+            ...state.calls.map(renderResearchCall)
+          );
+          scrollToBottom();
+        }
+
+        function showResearch(thinking, research, state, beforeNode = null) {
+          if (!state.calls.length) {
+            thinking.remove();
+            return research;
+          }
+          if (!research) {
+            research = createResearch();
+            if (thinking.isConnected) thinking.replaceWith(research);
+            else if (beforeNode?.isConnected) conversation.insertBefore(research, beforeNode);
+            else conversation.appendChild(research);
+          }
+          renderResearch(research, state);
+          return research;
+        }
+
+        function finishResearch(thinking, research, state, interrupted, beforeNode) {
+          for (const call of state.calls) {
+            if (call.status !== "running") continue;
+            call.status = interrupted ? "failed" : "unknown";
+            if (interrupted) call.error = "The request ended before the tool returned.";
+          }
+          if (!state.calls.length) {
+            thinking.remove();
+            research?.remove();
+            return null;
+          }
+          return showResearch(thinking, research, state, beforeNode);
         }
 
         function agentEventText(event) {
@@ -855,16 +1206,8 @@
 
           for (const event of events) {
             for (const part of event.content?.parts || []) {
-              const error = part.functionResponse?.response?.error;
-              if (typeof error === "string" && error.trim()) {
-                return `Tool error: ${error.trim()}`;
-              }
-              if (error && typeof error === "object") {
-                const detail = error.message || error.detail || error.code;
-                if (typeof detail === "string" && detail.trim()) {
-                  return `Tool error: ${detail.trim()}`;
-                }
-              }
+              const error = toolError(part.functionResponse?.response);
+              if (error) return `Tool error: ${error}`;
             }
           }
 
@@ -1018,9 +1361,10 @@
           setBusy(true);
           const thinking = addThinking();
           const streamState = { segments: [], partial: "" };
-          const toolState = { names: [], seen: new Set() };
+          const toolState = { calls: [], byId: new Map() };
           const events = [];
           let agentMessage = null;
+          let research = null;
 
           try {
             const response = await fetch(apiUrl("/run_sse"), {
@@ -1047,19 +1391,20 @@
                 throw new Error(event.error.trim());
               }
               events.push(event);
-              if (applyStreamTools(toolState, event) && thinking.isConnected) {
-                updateThinkingTools(thinking, toolState.names);
+              if (trackToolEvents(toolState, event)) {
+                if (thinking.isConnected) updateThinkingTools(thinking, toolState.calls);
+                else if (research?.isConnected) renderResearch(research, toolState);
               }
               const text = applyStreamText(streamState, event);
               if (text !== null && (text.trim() || agentMessage)) {
-                thinking.remove();
+                research = showResearch(thinking, research, toolState, agentMessage);
                 if (!agentMessage) agentMessage = addMessage("agent", "");
                 updateAgentMessage(agentMessage, text);
               }
             }
 
             const text = finishStreamText(streamState);
-            thinking.remove();
+            research = finishResearch(thinking, research, toolState, false, agentMessage);
             if (text) {
               if (!agentMessage) agentMessage = addMessage("agent", "");
               updateAgentMessage(agentMessage, text);
@@ -1074,7 +1419,7 @@
               await renderArtifact(userId, sessionId, artifact);
             }
           } catch (error) {
-            thinking.remove();
+            research = finishResearch(thinking, research, toolState, true, agentMessage);
             const partialText = finishStreamText(streamState);
             if (agentMessage && partialText) updateAgentMessage(agentMessage, partialText);
             addMessage("agent", error instanceof Error ? error.message : "The request failed.", "error");
