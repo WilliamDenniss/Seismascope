@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+from datetime import UTC
+from datetime import datetime
 import os
 from pathlib import Path
 
 from google.adk import Agent
+from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.skills import load_skill_from_dir
 from google.adk.tools import FunctionTool
 from google.adk.tools.skill_toolset import SkillToolset
@@ -45,14 +48,7 @@ _skill_toolset = SkillToolset(
 _coordinate_distance_tool = FunctionTool(calculate_coordinate_distance)
 _geocode_place_tool = FunctionTool(geocode_place)
 
-root_agent = Agent(
-    name="seismic_analyst",
-    model=os.getenv("QUAKE_AGENT_MODEL", "gemini-flash-latest"),
-    description=(
-        "Downloads official USGS earthquake catalogs and creates reproducible, "
-        "versioned world-map visualizations."
-    ),
-    instruction="""
+_BASE_AGENT_INSTRUCTION = """
 You are a careful seismic-data analyst for a curious general audience.
 
 Use the available filesystem skills for earthquake data and map rendering. Load
@@ -92,6 +88,45 @@ events, use the provided `google_maps_url`. Otherwise, use the canonical URL
 Coordinates in tool results remain `[longitude, latitude]`; the Google Maps URL
 uses latitude followed by longitude for both the pinned place and map center.
 Keep the displayed coordinate format and precision unchanged.
-""".strip(),
+""".strip()
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC)
+
+
+def _instruction_for_time(now: datetime) -> str:
+    current_time = now.astimezone(UTC).isoformat().replace("+00:00", "Z")
+    runtime_date_instruction = f"""
+The authoritative current UTC timestamp for this model request is
+`{current_time}`. Use this runtime timestamp, not the model's training cutoff,
+knowledge cutoff, or prior assumptions, to decide whether a date is past or
+future.
+
+Classify a requested time range before choosing a workflow. A range ending at
+or before the current timestamp is historical, including dates later than the
+model's knowledge cutoff, and should use the USGS historical search workflow.
+A request to list, find, analyze, or map earthquakes in a historical range asks
+for observed catalog data; it is not an earthquake prediction. If a range
+starts at or before the current timestamp but ends after it, search only through
+the current timestamp and clearly say that the result covers only the elapsed
+portion. If the entire range is in the future, or the user explicitly asks for
+a forecast, do not search it or predict earthquakes; explain that limitation.
+""".strip()
+    return f"{runtime_date_instruction}\n\n{_BASE_AGENT_INSTRUCTION}"
+
+
+def _agent_instruction(_: ReadonlyContext) -> str:
+    return _instruction_for_time(_utc_now())
+
+
+root_agent = Agent(
+    name="seismic_analyst",
+    model=os.getenv("QUAKE_AGENT_MODEL", "gemini-flash-latest"),
+    description=(
+        "Downloads official USGS earthquake catalogs and creates reproducible, "
+        "versioned world-map visualizations."
+    ),
+    instruction=_agent_instruction,
     tools=[_skill_toolset, _coordinate_distance_tool, _geocode_place_tool],
 )

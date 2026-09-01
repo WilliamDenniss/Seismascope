@@ -27,16 +27,24 @@ explicitly dated periods.
 
 For a historical search:
 
-1. Resolve relative periods such as "last five years" to explicit UTC
-   `start_time` and `end_time` values. Supply a complete `circle` for a radius
+1. Use the authoritative current UTC timestamp from the agent instruction to
+   classify the requested period. Do not use the model's training or knowledge
+   cutoff. A fully elapsed period is historical even when it is later than that
+   cutoff. Requests to list, find, analyze, or map earthquakes in such a period
+   ask for observed catalog data, not a prediction.
+2. Resolve relative periods such as "last five years" to explicit UTC
+   `start_time` and `end_time` values. For a period that crosses the current
+   timestamp, set `end_time` to the current timestamp and disclose that the
+   result covers only the elapsed portion. Do not search a wholly future period
+   or claim to predict its earthquakes. Supply a complete `circle` for a radius
    search, or omit it for a worldwide search.
-2. Call `search_usgs_events`. The tool count-checks the request, stores the
+3. Call `search_usgs_events`. The tool count-checks the request, stores the
    strongest 20,000 events when more than 20,000 match, and returns compact
    provenance rather than an event array.
-3. Use `query_usgs_search` only for a bounded listing or small selected-event
+4. Use `query_usgs_search` only for a bounded listing or small selected-event
    map. Use the exact search artifact version with `plot_usgs_search_on_map`
    when mapping the full stored result.
-4. Disclose the exact UTC period and, for a named place, the coordinate and
+5. Disclose the exact UTC period and, for a named place, the coordinate and
    radius supplied to the tool. If `truncated` is true, repeat the tool's
    truncation notice and never call the stored set all matching events.
 
