@@ -75,20 +75,27 @@ specification records the caption and a `map_viewport` rectangle that locates
 the geographic map within the taller captioned PNG.
 
 Set `crop_to_drawn_area=true` to crop the result to the smallest pixel area that
-contains every rendered circle and placed label. `crop_padding_px` defaults to
-32 pixels and may be set from 0 through 1024. Horizontal cropping treats the
-world map as circular: a crop around the antimeridian stitches the map's right
-and left edges and reports crossing bounds with `west > east`. The saved map
-spec records the original map dimensions, output dimensions, visible bounds,
-crop rectangle, padding, and whether antimeridian stitching was used.
+contains every rendered circle and placed label. The renderer calculates
+context padding from the marker-only long edge: 50 percent per side, clamped
+from 16 through 96 standard-map pixels. Labels do not affect geographic bounds;
+the renderer places them within the selected viewport and warns when one cannot
+fit without overlap. Horizontal cropping treats the world map as circular: a
+crop around the antimeridian stitches the map's right and left edges and reports
+crossing bounds with `west > east`. The saved map spec records the marker extent,
+calculated padding, crop rectangle, dimensions, visible bounds, and wrapping
+behavior.
 
 For a requested crop, the renderer considers the 2048, 4096, and 8192 pixel
 sources in that order and selects the first whose cropped output has a long edge
 of at least 1400 pixels. If even the 8192 pixel source cannot meet the target,
-the renderer preserves the requested crop, uses that largest source, and emits
-a warning. `crop_padding_px` is expressed in standard-map pixels and is scaled
-for the selected source; the saved spec records both padding values, the target
-and whether it was met, and the selected source map.
+the renderer enlarges only the cropped base image with Lanczos resampling by up
+to 4x, then redraws markers and labels at the output resolution. Marker centers
+follow the enlarged viewport, but their radii and outlines remain at the selected
+source's native scale so raster interpolation cannot turn nearby earthquakes
+into overlapping blobs. The renderer warns when the enlarged result still
+cannot reach the target. The saved spec records the standard and source padding,
+native crop dimensions, enlargement factor, target, whether it was met, and the
+selected source map.
 
 The circle is a screen-space circle whose pixel radius comes from the projected
 north/south latitude span. It is not a geodesic circle on Earth's surface.

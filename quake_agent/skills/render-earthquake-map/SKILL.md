@@ -41,10 +41,9 @@ This skill draws events; it does not decide which earthquakes are relevant.
   A global or worldwide request, a comparison, or events spanning most of the
   world does not by itself request full-world framing; let the renderer produce
   a broad or nearly full-world crop when that is what the drawn content needs.
-- Use enough `crop_padding_px` to preserve geographic context: approximately 96
-  pixels for broad regions and 48 pixels for smaller regions. Pacific and other
-  antimeridian-crossing regions should still be cropped; the renderer handles
-  antimeridian stitching.
+- Do not choose pixel padding or infer a framing category. The map tool derives
+  geographic context deterministically from the rendered event extent,
+  including for antimeridian-crossing regions.
 - Coordinates are always `[longitude, latitude]`.
 - `latitude_radius` is a positive angular latitude span in degrees. It controls
   visual marker size and is not a geodesic distance or hazard radius.
@@ -65,8 +64,9 @@ This skill draws events; it does not decide which earthquakes are relevant.
   array back to `plot_data_points_on_map`. For a catalog-backed map, rerun
   `plot_usgs_feed_on_map` using the saved `event_source` catalog version
   and revised filters; its specification intentionally does not expand the
-  thousands of event objects. Preserve the saved crop request, padding, legend,
-  and caption unless the user asks to change them.
+  thousands of event objects. Preserve the saved crop request, legend, and
+  caption unless the user asks to change them; the renderer recalculates
+  padding for the revised events.
 - For a catalog-backed historical map, rerun `plot_usgs_search_on_map` using its
   saved search artifact version and revised local time or magnitude filters.
 - Report both the PNG artifact and its source-specification artifact, including

@@ -74,10 +74,86 @@ def test_map_source_selection_uses_long_edge_boundaries(
     ]
 
 
-def test_threshold_arguments_are_not_exposed_by_the_renderer() -> None:
-    parameters = inspect.signature(plot_data_points_on_map).parameters
-    assert "high_resolution_crop_threshold_percent" not in parameters
-    assert "two_x_crop_threshold_percent" not in parameters
+@pytest.mark.parametrize(
+    ("marker_long_edge", "expected_padding"),
+    [
+        (0, 16),
+        (8, 16),
+        (32, 16),
+        (100, 50),
+        (192, 96),
+        (400, 96),
+    ],
+)
+def test_automatic_crop_padding_scales_with_marker_extent(
+    marker_long_edge: int,
+    expected_padding: int,
+) -> None:
+    marker_crop = (
+        None
+        if marker_long_edge == 0
+        else {"width": marker_long_edge, "height": 1}
+    )
+
+    assert map_tools._automatic_crop_padding(marker_crop) == (
+        expected_padding,
+        marker_long_edge,
+    )
+
+
+def test_crop_upscaling_does_not_inflate_earthquake_symbols() -> None:
+    image_bytes, spec, _warnings, _skipped = map_tools._render_map(
+        [
+            MapEvent(
+                coord=[-122.24, 37.48],
+                label="",
+                latitude_radius=0.1,
+                color="#ff00ff",
+            )
+        ],
+        crop_to_drawn_area=True,
+    )
+
+    assert spec["crop"]["upscale_factor"] == 4
+    with Image.open(BytesIO(image_bytes)) as image:
+        rgb = image.convert("RGB")
+        marker_pixels = [
+            (x, y)
+            for y in range(rgb.height)
+            for x in range(rgb.width)
+            if (
+                rgb.getpixel((x, y))[0] > 240
+                and rgb.getpixel((x, y))[1] < 20
+                and rgb.getpixel((x, y))[2] > 240
+            )
+        ]
+
+    assert marker_pixels
+    marker_width = max(x for x, _ in marker_pixels) - min(
+        x for x, _ in marker_pixels
+    ) + 1
+    marker_height = max(y for _, y in marker_pixels) - min(
+        y for _, y in marker_pixels
+    ) + 1
+    assert marker_width <= 10
+    assert marker_height <= 10
+
+
+def test_pixel_framing_arguments_are_not_exposed_by_renderers() -> None:
+    for renderer in (
+        plot_data_points_on_map,
+        plot_usgs_feed_on_map,
+        plot_usgs_search_on_map,
+    ):
+        parameters = inspect.signature(renderer).parameters
+        assert "crop_padding_px" not in parameters
+        assert "high_resolution_crop_threshold_percent" not in parameters
+        assert "two_x_crop_threshold_percent" not in parameters
+
+        declaration = FunctionTool(renderer)._get_declaration()
+        schema = declaration.parameters_json_schema
+        assert schema is not None
+        assert "crop_padding_px" not in schema["properties"]
 
 
 def test_renderer_schema_exposes_optional_agent_defined_legend_and_caption() -> None:
@@ -494,14 +570,12 @@ async def test_render_embeds_and_persists_caption_without_changing_map_viewport(
         events,
         artifact_name="caption-map.png",
         crop_to_drawn_area=True,
-        crop_padding_px=48,
         tool_context=artifact_context,
     )
     captioned = await plot_data_points_on_map(
         events,
         artifact_name="caption-map.png",
         crop_to_drawn_area=True,
-        crop_padding_px=48,
         caption=MapCaption(
             title="Northern California Earthquakes",
             date="August 31, 2026",
@@ -603,20 +677,24 @@ async def test_crop_to_drawn_area_records_dimensions_bounds_and_padding(
             )
         ],
         crop_to_drawn_area=True,
-        crop_padding_px=12,
         tool_context=artifact_context,
     )
 
     assert rendered["status"] == "ok"
     assert rendered["crop"]["requested"] is True
     assert rendered["crop"]["applied"] is True
-    assert rendered["crop"]["padding_px"] == 12
-    assert rendered["crop"]["source_padding_px"] == 48
+    assert rendered["crop"]["padding_mode"] == "automatic"
+    assert rendered["crop"]["padding_px"] == 16
+    assert rendered["crop"]["source_padding_px"] == 64
+    assert rendered["crop"]["marker_long_edge_px"] == 24
+    assert rendered["crop"]["native_width"] == 224
+    assert rendered["crop"]["native_height"] == 224
+    assert rendered["crop"]["upscale_factor"] == 4
     assert rendered["crop"]["minimum_long_edge_px"] == 1400
     assert rendered["crop"]["minimum_long_edge_satisfied"] is False
     assert rendered["source_map"] == "static/world_map_4x.png"
-    assert rendered["width"] < 400
-    assert rendered["height"] < 400
+    assert rendered["width"] == 896
+    assert rendered["height"] == 896
     assert any("1400-pixel target" in warning for warning in rendered["warnings"])
     assert rendered["bounds"]["west"] < 0 < rendered["bounds"]["east"]
     assert rendered["bounds"]["south"] < 0 < rendered["bounds"]["north"]
@@ -637,6 +715,82 @@ async def test_crop_to_drawn_area_records_dimensions_bounds_and_padding(
     assert loaded["spec"]["crop"] == rendered["crop"]
 
 
+async def test_labels_do_not_change_automatic_geographic_framing(
+    artifact_context,
+) -> None:
+    unlabeled = await plot_data_points_on_map(
+        [MapEvent(coord=[0, 0], label="", latitude_radius=2, color="red")],
+        artifact_name="unlabeled-map.png",
+        crop_to_drawn_area=True,
+        tool_context=artifact_context,
+    )
+    labeled = await plot_data_points_on_map(
+        [
+            MapEvent(
+                coord=[0, 0],
+                label="A deliberately longer event label",
+                latitude_radius=2,
+                color="red",
+            )
+        ],
+        artifact_name="labeled-map.png",
+        crop_to_drawn_area=True,
+        tool_context=artifact_context,
+    )
+
+    assert labeled["status"] == "ok"
+    assert labeled["crop"]["marker_long_edge_px"] == unlabeled["crop"][
+        "marker_long_edge_px"
+    ]
+    assert labeled["crop"]["padding_px"] == unlabeled["crop"]["padding_px"]
+    assert labeled["crop"] == unlabeled["crop"]
+    assert labeled["bounds"] == unlabeled["bounds"]
+
+
+async def test_tight_redwood_city_extent_uses_local_automatic_framing(
+    artifact_context,
+) -> None:
+    rendered = await plot_data_points_on_map(
+        [
+            MapEvent(
+                coord=[-122.24, 37.48],
+                label="Redwood City",
+                latitude_radius=0.2,
+                color="#06b6d4",
+            ),
+            MapEvent(
+                coord=[-122.02, 37.26],
+                label="M1.5 (Saratoga)",
+                latitude_radius=0.1,
+                color="#f97316",
+            ),
+            MapEvent(
+                coord=[-122.5, 37.4],
+                label="M1.3 (Coast)",
+                latitude_radius=0.1,
+                color="#f97316",
+            ),
+            MapEvent(
+                coord=[-122.22, 37.38],
+                label="M1.9 (Portola Valley)",
+                latitude_radius=0.1,
+                color="#f97316",
+            ),
+        ],
+        crop_to_drawn_area=True,
+        tool_context=artifact_context,
+    )
+
+    assert rendered["status"] == "ok"
+    assert rendered["crop"]["padding_px"] == 16
+    assert rendered["crop"]["upscale_factor"] == 4
+    assert rendered["bounds"]["east"] - rendered["bounds"]["west"] < 7
+    assert rendered["bounds"]["west"] < -122.24 < rendered["bounds"]["east"]
+    assert not any(
+        warning.startswith("Label for event") for warning in rendered["warnings"]
+    )
+
+
 async def test_crop_stitches_antimeridian_into_compact_output(artifact_context) -> None:
     rendered = await plot_data_points_on_map(
         [
@@ -648,12 +802,15 @@ async def test_crop_stitches_antimeridian_into_compact_output(artifact_context) 
             )
         ],
         crop_to_drawn_area=True,
-        crop_padding_px=8,
         tool_context=artifact_context,
     )
 
     assert rendered["status"] == "ok"
-    assert rendered["width"] < 600
+    assert rendered["width"] == MINIMUM_CROP_LONG_EDGE_PX
+    assert rendered["crop"]["padding_px"] == 23
+    assert rendered["crop"]["marker_long_edge_px"] == 46
+    assert rendered["crop"]["upscale_factor"] > 1
+    assert rendered["crop"]["minimum_long_edge_satisfied"] is True
     assert rendered["crop"]["wraps_antimeridian"] is True
     assert rendered["source_map"] == "static/world_map_4x.png"
     assert rendered["bounds"]["west"] > rendered["bounds"]["east"]
@@ -683,14 +840,12 @@ async def test_legend_does_not_change_scaled_antimeridian_crop(
         events,
         artifact_name="plain-crop.png",
         crop_to_drawn_area=True,
-        crop_padding_px=8,
         tool_context=artifact_context,
     )
     with_legend = await plot_data_points_on_map(
         events,
         artifact_name="legend-crop.png",
         crop_to_drawn_area=True,
-        crop_padding_px=8,
         legend=DENSE_MAP_MAGNITUDE_LEGEND,
         tool_context=artifact_context,
     )
@@ -703,7 +858,7 @@ async def test_legend_does_not_change_scaled_antimeridian_crop(
     assert with_legend["crop"] == plain["crop"]
     assert with_legend["crop"]["wraps_antimeridian"] is True
     assert with_legend["legend"] is not None
-    assert font_sizes == [10]
+    assert font_sizes == [map_tools._annotation_font_size((1400, 1400))]
 
 
 async def test_scaled_crop_normalizes_label_size_to_final_canvas(
@@ -728,7 +883,6 @@ async def test_scaled_crop_normalizes_label_size_to_final_canvas(
             )
         ],
         crop_to_drawn_area=True,
-        crop_padding_px=8,
         tool_context=artifact_context,
     )
 
@@ -759,7 +913,8 @@ async def test_crop_uses_two_x_map_when_it_reaches_minimum_long_edge(
 
     assert rendered["status"] == "ok"
     assert rendered["source_map"] == "static/world_map_2x.png"
-    assert rendered["crop"]["source_padding_px"] == 64
+    assert rendered["crop"]["padding_px"] == 96
+    assert rendered["crop"]["source_padding_px"] == 192
     assert max(rendered["width"], rendered["height"]) >= 1400
     assert rendered["crop"]["minimum_long_edge_satisfied"] is True
 
@@ -786,7 +941,7 @@ async def test_crop_uses_four_x_map_when_two_x_is_still_too_small(
     assert rendered["crop"]["minimum_long_edge_satisfied"] is True
 
 
-async def test_349_pixel_crop_uses_four_x_map_and_warns_target_is_unmet(
+async def test_349_pixel_crop_uses_fractional_enlargement_to_reach_target(
     artifact_context,
     monkeypatch,
 ) -> None:
@@ -816,9 +971,12 @@ async def test_349_pixel_crop_uses_four_x_map_and_warns_target_is_unmet(
 
     assert rendered["status"] == "ok"
     assert rendered["source_map"] == "static/world_map_4x.png"
-    assert (rendered["width"], rendered["height"]) == (1396, 400)
-    assert rendered["crop"]["minimum_long_edge_satisfied"] is False
-    assert any("1400-pixel target" in warning for warning in rendered["warnings"])
+    assert (rendered["width"], rendered["height"]) == (1400, 401)
+    assert rendered["crop"]["native_width"] == 1396
+    assert rendered["crop"]["native_height"] == 400
+    assert rendered["crop"]["upscale_factor"] == pytest.approx(1400 / 1396)
+    assert rendered["crop"]["minimum_long_edge_satisfied"] is True
+    assert not any("1400-pixel target" in warning for warning in rendered["warnings"])
 
 
 async def test_non_square_crop_uses_standard_map_when_long_edge_meets_minimum(

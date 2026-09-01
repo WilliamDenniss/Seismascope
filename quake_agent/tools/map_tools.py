@@ -41,9 +41,11 @@ MAP_SOURCES: list[MapSource] = [
     (_STATIC_MAP_DIR / "world_map_4x.png", (8192, 8192)),
 ]
 MINIMUM_CROP_LONG_EDGE_PX = 1400
+MINIMUM_AUTOMATIC_CROP_PADDING_PX = 16
+MAXIMUM_AUTOMATIC_CROP_PADDING_PX = 96
+AUTOMATIC_CROP_PADDING_RATIO = 0.5
+MAXIMUM_CROP_UPSCALE_FACTOR = 4.0
 DEFAULT_MAP_ARTIFACT = "earthquake-map.png"
-DEFAULT_CROP_PADDING_PX = 32
-MAX_CROP_PADDING_PX = 1024
 _SAFE_ARTIFACT_NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/-]*\.png$")
 _LEGEND_TEXT_TRANSLATION = str.maketrans(
     {
@@ -499,6 +501,26 @@ def _content_crop(
     }
 
 
+def _automatic_crop_padding(
+    marker_crop: dict[str, int | bool] | None,
+) -> tuple[int, int]:
+    """Return deterministic context padding from the marker-only extent."""
+    if marker_crop is None:
+        return MINIMUM_AUTOMATIC_CROP_PADDING_PX, 0
+    marker_long_edge = max(
+        int(marker_crop["width"]),
+        int(marker_crop["height"]),
+    )
+    padding = round(marker_long_edge * AUTOMATIC_CROP_PADDING_RATIO)
+    return (
+        max(
+            MINIMUM_AUTOMATIC_CROP_PADDING_PX,
+            min(MAXIMUM_AUTOMATIC_CROP_PADDING_PX, padding),
+        ),
+        marker_long_edge,
+    )
+
+
 def _crop_wrapped_image(
     image: Image.Image,
     crop: dict[str, int | bool],
@@ -617,6 +639,7 @@ def _render_scaled_crop(
     standard_crop: dict[str, int | bool],
     source: MapSource,
     warnings: list[str],
+    upscale_factor: float = 1.0,
 ) -> tuple[Image.Image, dict[str, int | bool], Image.Image]:
     source_path, source_size = source
     scale = _map_source_scale(source)
@@ -632,22 +655,38 @@ def _render_scaled_crop(
             )
         base = _crop_wrapped_image(source_image, scaled_crop).convert("RGBA")
 
+    if upscale_factor > 1.0:
+        base = base.resize(
+            (
+                max(1, round(base.width * upscale_factor)),
+                max(1, round(base.height * upscale_factor)),
+            ),
+            Image.Resampling.LANCZOS,
+        )
+
     crop_x = int(scaled_crop["source_x"])
     crop_y = int(scaled_crop["source_y"])
     crop_width = int(scaled_crop["width"])
     content_overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(content_overlay, "RGBA")
-    outline_width = max(2, round(source_size[0] / 1024))
+    maximum_outline_width = max(2, round(source_size[0] / 1024))
     for item in prepared:
+        # Crop enlargement interpolates the basemap to a useful output size;
+        # it must not also inflate earthquake symbols into overlapping blobs.
         radius = item["radius_px"] * scale
-        y = item["y"] * scale - crop_y
-        for x in _viewport_x_positions(
+        outline_width = min(
+            maximum_outline_width,
+            max(1, round(radius * 0.25)),
+        )
+        y = (item["y"] * scale - crop_y) * upscale_factor
+        native_x_positions = _viewport_x_positions(
             item["x"] * scale,
-            radius,
+            item["radius_px"] * scale,
             crop_x,
             crop_width,
             source_size[0],
-        ):
+        )
+        for x in (position * upscale_factor for position in native_x_positions):
             draw.ellipse(
                 (x - radius, y - radius, x + radius, y + radius),
                 fill=item["fill"],
@@ -668,14 +707,17 @@ def _render_scaled_crop(
         )
         text_width = text_box[2] - text_box[0]
         text_height = text_box[3] - text_box[1]
-        center_y = item["y"] * scale - crop_y
-        centers = _viewport_x_positions(
-            item["x"] * scale,
-            item["radius_px"] * scale,
-            crop_x,
-            crop_width,
-            source_size[0],
-        )
+        center_y = (item["y"] * scale - crop_y) * upscale_factor
+        centers = [
+            position * upscale_factor
+            for position in _viewport_x_positions(
+                item["x"] * scale,
+                item["radius_px"] * scale,
+                crop_x,
+                crop_width,
+                source_size[0],
+            )
+        ]
         chosen, chosen_box = _choose_label_position(
             centers,
             center_y,
@@ -907,7 +949,6 @@ def _render_caption(
 def _render_map(
     events: list[MapEvent],
     crop_to_drawn_area: bool = False,
-    crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
     legend: MapLegend | None = None,
     caption: MapCaption | None = None,
 ) -> tuple[bytes, dict[str, Any], list[str], int]:
@@ -1009,40 +1050,9 @@ def _render_map(
                 width=outline_width,
             )
 
-    occupied_labels: list[tuple[float, float, float, float]] = []
-    placed_labels: list[dict[str, Any]] = []
-    for item in sorted(prepared, key=lambda value: value["index"]):
-        label = item["label"].strip()
-        if not label:
-            continue
-        label_x = item["x"] % width
-        text_box = draw.textbbox((0, 0), label, font=font, stroke_width=2)
-        text_width = text_box[2] - text_box[0]
-        text_height = text_box[3] - text_box[1]
-        chosen, chosen_box = _choose_label_position(
-            [label_x],
-            item["y"],
-            item["radius_px"],
-            (text_width, text_height),
-            (width, height),
-            occupied_labels,
-        )
-        if chosen is None or chosen_box is None:
-            warnings.append(f"Label for event {item['index']} could not be placed.")
-            continue
-        draw.text(
-            chosen,
-            label,
-            font=font,
-            fill=(20, 20, 20, 255),
-            stroke_width=2,
-            stroke_fill=(255, 255, 255, 235),
-        )
-        occupied_labels.append(chosen_box)
-        placed_labels.append({"index": item["index"], "label": label})
+    marker_crop = _content_crop(overlay, 0)
+    crop_padding_px, marker_long_edge_px = _automatic_crop_padding(marker_crop)
 
-    rendered = Image.alpha_composite(image, overlay).convert("RGB")
-    content_overlay = overlay
     crop: dict[str, int | bool] = {
         "source_x": 0,
         "source_y": 0,
@@ -1052,6 +1062,8 @@ def _render_map(
     }
     crop_applied = False
     if crop_to_drawn_area:
+        # Geographic framing is marker-only. Labels are reflowed within the
+        # chosen viewport so their text length cannot zoom the map out.
         content_crop = _content_crop(overlay, crop_padding_px)
         if content_crop is None:
             warnings.append(
@@ -1060,26 +1072,76 @@ def _render_map(
         else:
             crop = content_crop
             crop_applied = crop["width"] != width or crop["height"] != height
-            if crop_applied:
-                rendered = _crop_wrapped_image(rendered, crop)
-                content_overlay = _crop_wrapped_image(content_overlay, crop)
+
+    requested_labels = [
+        {"index": item["index"], "label": item["label"].strip()}
+        for item in sorted(prepared, key=lambda value: value["index"])
+        if item["label"].strip()
+    ]
+    if not crop_applied:
+        occupied_labels: list[tuple[float, float, float, float]] = []
+        prepared_by_index = {item["index"]: item for item in prepared}
+        for requested in requested_labels:
+            item = prepared_by_index[requested["index"]]
+            label = requested["label"]
+            label_x = item["x"] % width
+            text_box = draw.textbbox((0, 0), label, font=font, stroke_width=2)
+            text_width = text_box[2] - text_box[0]
+            text_height = text_box[3] - text_box[1]
+            chosen, chosen_box = _choose_label_position(
+                [label_x],
+                item["y"],
+                item["radius_px"],
+                (text_width, text_height),
+                (width, height),
+                occupied_labels,
+            )
+            if chosen is None or chosen_box is None:
+                warnings.append(
+                    f"Label for event {item['index']} could not be placed."
+                )
+                continue
+            draw.text(
+                chosen,
+                label,
+                font=font,
+                fill=(20, 20, 20, 255),
+                stroke_width=2,
+                stroke_fill=(255, 255, 255, 235),
+            )
+            occupied_labels.append(chosen_box)
+
+    rendered = Image.alpha_composite(image, overlay).convert("RGB")
+    content_overlay = overlay
 
     selected_source = MAP_SOURCES[0]
     if crop_applied:
         selected_source = _select_map_source(crop)
     source_path, source_size = selected_source
     source_scale = _map_source_scale(selected_source)
-    source_padding_px = crop_padding_px
-    if selected_source != MAP_SOURCES[0]:
+    source_padding_px = crop_padding_px * source_scale
+    native_width = int(crop["width"]) * source_scale
+    native_height = int(crop["height"]) * source_scale
+    upscale_factor = 1.0
+    if (
+        crop_applied
+        and selected_source == MAP_SOURCES[-1]
+        and max(native_width, native_height) < MINIMUM_CROP_LONG_EDGE_PX
+    ):
+        upscale_factor = min(
+            MAXIMUM_CROP_UPSCALE_FACTOR,
+            MINIMUM_CROP_LONG_EDGE_PX / max(native_width, native_height),
+        )
+    if crop_applied:
         rendered, crop, content_overlay = _render_scaled_crop(
             prepared,
-            placed_labels,
+            requested_labels,
             crop,
             selected_source,
             warnings,
+            upscale_factor,
         )
         width, height = source_size
-        source_padding_px = crop_padding_px * source_scale
 
     rendered, legend_spec = _render_legend(
         rendered,
@@ -1094,8 +1156,8 @@ def _render_map(
     )
     if crop_applied and not minimum_long_edge_satisfied:
         warnings.append(
-            f"Crop long edge is {max(map_width, map_height)} pixels at "
-            "the largest available map source, below the "
+            f"Crop long edge is {max(map_width, map_height)} pixels after "
+            f"{upscale_factor:g}x enlargement, below the "
             f"{MINIMUM_CROP_LONG_EDGE_PX}-pixel target."
         )
 
@@ -1121,8 +1183,13 @@ def _render_map(
         "crop": {
             "requested": crop_to_drawn_area,
             "applied": crop_applied,
+            "padding_mode": "automatic",
             "padding_px": crop_padding_px,
             "source_padding_px": source_padding_px,
+            "marker_long_edge_px": marker_long_edge_px,
+            "native_width": native_width,
+            "native_height": native_height,
+            "upscale_factor": round(upscale_factor, 6),
             "minimum_long_edge_px": MINIMUM_CROP_LONG_EDGE_PX,
             "minimum_long_edge_satisfied": minimum_long_edge_satisfied,
             **crop,
@@ -1159,7 +1226,6 @@ async def plot_usgs_feed_on_map(
     end_time: str | None = None,
     artifact_name: str = DEFAULT_MAP_ARTIFACT,
     crop_to_drawn_area: bool = False,
-    crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
     caption: MapCaption | None = None,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
@@ -1176,7 +1242,6 @@ async def plot_usgs_feed_on_map(
         artifact_name: Relative session-scoped PNG artifact name.
         crop_to_drawn_area: Crop to the filtered events instead of keeping the
             full-world view.
-        crop_padding_px: Context to retain around drawn content when cropping.
         caption: Optional title and date rendered above the map.
 
     Returns:
@@ -1187,18 +1252,6 @@ async def plot_usgs_feed_on_map(
         return {"status": "error", "error": "Tool context is unavailable."}
     if feed not in ARTIFACT_NAMES:
         return {"status": "error", "error": f"Unsupported feed: {feed!r}."}
-    if (
-        isinstance(crop_padding_px, bool)
-        or not isinstance(crop_padding_px, int)
-        or not 0 <= crop_padding_px <= MAX_CROP_PADDING_PX
-    ):
-        return {
-            "status": "error",
-            "error": (
-                f"crop_padding_px must be an integer from 0 through "
-                f"{MAX_CROP_PADDING_PX}."
-            ),
-        }
     names = _artifact_names(artifact_name)
     if names is None:
         return {
@@ -1278,7 +1331,6 @@ async def plot_usgs_feed_on_map(
         image_bytes, spec, warnings, render_skipped = _render_map(
             map_events,
             crop_to_drawn_area=crop_to_drawn_area,
-            crop_padding_px=crop_padding_px,
             legend=DENSE_MAP_MAGNITUDE_LEGEND,
             caption=caption,
         )
@@ -1367,7 +1419,6 @@ async def plot_usgs_search_on_map(
     end_time: str | None = None,
     artifact_name: str = DEFAULT_MAP_ARTIFACT,
     crop_to_drawn_area: bool = False,
-    crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
     caption: MapCaption | None = None,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
@@ -1381,7 +1432,6 @@ async def plot_usgs_search_on_map(
         artifact_name: Relative session-scoped PNG artifact name.
         crop_to_drawn_area: Crop to the filtered events instead of keeping the
             full-world view.
-        crop_padding_px: Context to retain around drawn content when cropping.
         caption: Optional title and date rendered above the map.
 
     Returns:
@@ -1390,18 +1440,6 @@ async def plot_usgs_search_on_map(
     """
     if tool_context is None:
         return {"status": "error", "error": "Tool context is unavailable."}
-    if (
-        isinstance(crop_padding_px, bool)
-        or not isinstance(crop_padding_px, int)
-        or not 0 <= crop_padding_px <= MAX_CROP_PADDING_PX
-    ):
-        return {
-            "status": "error",
-            "error": (
-                f"crop_padding_px must be an integer from 0 through "
-                f"{MAX_CROP_PADDING_PX}."
-            ),
-        }
     if min_magnitude is not None and (
         isinstance(min_magnitude, bool)
         or not isinstance(min_magnitude, (int, float))
@@ -1499,7 +1537,6 @@ async def plot_usgs_search_on_map(
         image_bytes, spec, warnings, render_skipped = _render_map(
             map_events,
             crop_to_drawn_area=crop_to_drawn_area,
-            crop_padding_px=crop_padding_px,
             legend=DENSE_MAP_MAGNITUDE_LEGEND,
             caption=caption,
         )
@@ -1584,7 +1621,6 @@ async def plot_data_points_on_map(
     events: list[MapEvent],
     artifact_name: str = DEFAULT_MAP_ARTIFACT,
     crop_to_drawn_area: bool = False,
-    crop_padding_px: int = DEFAULT_CROP_PADDING_PX,
     legend: MapLegend | None = None,
     caption: MapCaption | None = None,
     tool_context: ToolContext | None = None,
@@ -1599,7 +1635,6 @@ async def plot_data_points_on_map(
             rendered circles and labels. Crops automatically use the first map
             source whose output long edge reaches 1400 pixels, when available.
             The full-world map remains the default.
-        crop_padding_px: Context to retain around drawn content when cropping.
         legend: Optional ordered color keys and heading supplied by the agent.
         caption: Optional title and date rendered above the map.
 
@@ -1609,18 +1644,6 @@ async def plot_data_points_on_map(
     """
     if tool_context is None:
         return {"status": "error", "error": "Tool context is unavailable."}
-    if (
-        isinstance(crop_padding_px, bool)
-        or not isinstance(crop_padding_px, int)
-        or not 0 <= crop_padding_px <= MAX_CROP_PADDING_PX
-    ):
-        return {
-            "status": "error",
-            "error": (
-                f"crop_padding_px must be an integer from 0 through "
-                f"{MAX_CROP_PADDING_PX}."
-            ),
-        }
     names = _artifact_names(artifact_name)
     if names is None:
         return {
@@ -1632,7 +1655,6 @@ async def plot_data_points_on_map(
         image_bytes, spec, warnings, skipped = _render_map(
             events,
             crop_to_drawn_area=crop_to_drawn_area,
-            crop_padding_px=crop_padding_px,
             legend=legend,
             caption=caption,
         )
