@@ -50,7 +50,7 @@ Runtime configuration:
 - `QUAKE_AGENT_ALLOWED_ORIGINS`: Optional comma-separated CORS origins when the
   browser UI and API are hosted separately.
 - `QUAKE_AGENT_RATE_LIMIT` and `QUAKE_AGENT_RATE_WINDOW_SECONDS`: Per-process,
-  per-IP prompt limit. Defaults to 10 prompts per 600 seconds.
+  per-IP prompt limit. Defaults to 30 prompts per 600 seconds.
 - `QUAKE_AGENT_GEOCODER_BASE_URL`: HTTPS base URL for the Nominatim-compatible
   forward geocoder. Defaults to the public OpenStreetMap Nominatim service.
 - `GOOGLE_API_KEY` and `QUAKE_AGENT_MODEL`: Server-side Gemini credentials and
