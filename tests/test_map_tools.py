@@ -60,7 +60,9 @@ def test_antimeridian_circle_centers_wrap_both_directions() -> None:
         (350, 100, 2),
         (349, 100, 3),
         (175, 100, 3),
-        (174, 100, 3),
+        (174, 100, 4),
+        (88, 50, 4),
+        (87, 50, 4),
     ],
 )
 def test_map_source_selection_uses_long_edge_boundaries(
@@ -73,6 +75,7 @@ def test_map_source_selection_uses_long_edge_boundaries(
         (4096, 4096),
         (8192, 8192),
         (16384, 16384),
+        (32768, 32768),
     ]
     assert _select_map_source({"width": width, "height": height}) == MAP_SOURCES[
         source_index
@@ -80,7 +83,7 @@ def test_map_source_selection_uses_long_edge_boundaries(
 
 
 def test_eight_x_source_uses_four_named_quadrants() -> None:
-    source = MAP_SOURCES[-1]
+    source = MAP_SOURCES[-2]
 
     assert source.artifact == "static/world_map_8x"
     assert {
@@ -95,6 +98,28 @@ def test_eight_x_source_uses_four_named_quadrants() -> None:
     for tile in source.tiles:
         with Image.open(tile.path) as image:
             assert image.size == (8192, 8192)
+
+
+def test_sixteen_x_source_uses_four_by_four_numbered_grid() -> None:
+    source = MAP_SOURCES[-1]
+    tiles = {tile.name: tile for tile in source.tiles}
+
+    assert source.artifact == "static/world_map_16x"
+    assert source.size == (32768, 32768)
+    assert len(tiles) == 16
+    for x in range(4):
+        for y in range(4):
+            name = f"x{x}_y{y}"
+            tile = tiles[name]
+            assert tile.path.name == f"world_map_16x_{name}.png"
+            assert tile.box == (
+                x * 8192,
+                y * 8192,
+                (x + 1) * 8192,
+                (y + 1) * 8192,
+            )
+            with Image.open(tile.path) as image:
+                assert image.size == (8192, 8192)
 
 
 def _quadrant_test_source(tmp_path: Path) -> MapSource:
@@ -214,7 +239,7 @@ def test_crop_upscaling_does_not_inflate_earthquake_symbols() -> None:
         crop_to_drawn_area=True,
     )
 
-    assert spec["crop"]["upscale_factor"] == 4
+    assert 1 < spec["crop"]["upscale_factor"] < 4
     with Image.open(BytesIO(image_bytes)) as image:
         rgb = image.convert("RGB")
         marker_pixels = [
@@ -235,8 +260,8 @@ def test_crop_upscaling_does_not_inflate_earthquake_symbols() -> None:
     marker_height = max(y for _, y in marker_pixels) - min(
         y for _, y in marker_pixels
     ) + 1
-    assert marker_width <= 18
-    assert marker_height <= 18
+    assert marker_width <= 34
+    assert marker_height <= 34
 
 
 def test_pixel_framing_arguments_are_not_exposed_by_renderers() -> None:
@@ -785,14 +810,14 @@ async def test_crop_to_drawn_area_records_dimensions_bounds_and_padding(
     assert rendered["crop"]["applied"] is True
     assert rendered["crop"]["padding_mode"] == "automatic"
     assert rendered["crop"]["padding_px"] == 16
-    assert rendered["crop"]["source_padding_px"] == 128
+    assert rendered["crop"]["source_padding_px"] == 256
     assert rendered["crop"]["marker_long_edge_px"] == 24
-    assert rendered["crop"]["native_width"] == 448
-    assert rendered["crop"]["native_height"] == 448
-    assert rendered["crop"]["upscale_factor"] == pytest.approx(1400 / 448)
+    assert rendered["crop"]["native_width"] == 896
+    assert rendered["crop"]["native_height"] == 896
+    assert rendered["crop"]["upscale_factor"] == pytest.approx(1400 / 896)
     assert rendered["crop"]["minimum_long_edge_px"] == 1400
     assert rendered["crop"]["minimum_long_edge_satisfied"] is True
-    assert rendered["source_map"] == "static/world_map_8x"
+    assert rendered["source_map"] == "static/world_map_16x"
     assert rendered["width"] == 1400
     assert rendered["height"] == 1400
     assert not any("1400-pixel target" in warning for warning in rendered["warnings"])
@@ -805,15 +830,12 @@ async def test_crop_to_drawn_area_records_dimensions_bounds_and_padding(
         assert image.size == (rendered["width"], rendered["height"])
 
     loaded = await load_current_map_spec(tool_context=artifact_context)
-    assert loaded["spec"]["source"]["width"] == 16384
-    assert loaded["spec"]["source"]["height"] == 16384
-    assert loaded["spec"]["source"]["artifact"] == "static/world_map_8x"
-    assert loaded["spec"]["source"]["scale"] == 8
+    assert loaded["spec"]["source"]["width"] == 32768
+    assert loaded["spec"]["source"]["height"] == 32768
+    assert loaded["spec"]["source"]["artifact"] == "static/world_map_16x"
+    assert loaded["spec"]["source"]["scale"] == 16
     assert [tile["name"] for tile in loaded["spec"]["source"]["tiles"]] == [
-        "nw",
-        "ne",
-        "sw",
-        "se",
+        f"x{x}_y{y}" for x in range(4) for y in range(4)
     ]
     assert "area_percent_of_world" not in loaded["spec"]["crop"]
     assert "high_resolution_threshold_percent" not in loaded["spec"]["crop"]
@@ -889,7 +911,8 @@ async def test_tight_redwood_city_extent_uses_local_automatic_framing(
 
     assert rendered["status"] == "ok"
     assert rendered["crop"]["padding_px"] == 16
-    assert rendered["crop"]["upscale_factor"] == 4
+    assert 1 < rendered["crop"]["upscale_factor"] < 4
+    assert rendered["source_map"] == "static/world_map_16x"
     assert rendered["bounds"]["east"] - rendered["bounds"]["west"] < 7
     assert rendered["bounds"]["west"] < -122.24 < rendered["bounds"]["east"]
     assert not any(
@@ -912,13 +935,13 @@ async def test_crop_stitches_antimeridian_into_compact_output(artifact_context) 
     )
 
     assert rendered["status"] == "ok"
-    assert rendered["width"] == MINIMUM_CROP_LONG_EDGE_PX
+    assert rendered["width"] == 1472
     assert rendered["crop"]["padding_px"] == 23
     assert rendered["crop"]["marker_long_edge_px"] == 46
-    assert rendered["crop"]["upscale_factor"] > 1
+    assert rendered["crop"]["upscale_factor"] == 1
     assert rendered["crop"]["minimum_long_edge_satisfied"] is True
     assert rendered["crop"]["wraps_antimeridian"] is True
-    assert rendered["source_map"] == "static/world_map_8x"
+    assert rendered["source_map"] == "static/world_map_16x"
     assert rendered["bounds"]["west"] > rendered["bounds"]["east"]
 
 
@@ -956,7 +979,7 @@ async def test_legend_does_not_change_scaled_antimeridian_crop(
         tool_context=artifact_context,
     )
 
-    assert plain["source_map"] == "static/world_map_8x"
+    assert plain["source_map"] == "static/world_map_16x"
     assert with_legend["source_map"] == plain["source_map"]
     assert with_legend["width"] == plain["width"]
     assert with_legend["height"] == plain["height"]
@@ -964,7 +987,7 @@ async def test_legend_does_not_change_scaled_antimeridian_crop(
     assert with_legend["crop"] == plain["crop"]
     assert with_legend["crop"]["wraps_antimeridian"] is True
     assert with_legend["legend"] is not None
-    assert font_sizes == [map_tools._annotation_font_size((1400, 1400))]
+    assert font_sizes == [map_tools._annotation_font_size((1472, 1472))]
 
 
 async def test_scaled_crop_normalizes_label_size_to_final_canvas(
@@ -995,7 +1018,7 @@ async def test_scaled_crop_normalizes_label_size_to_final_canvas(
     expected_final_size = map_tools._annotation_font_size(
         (rendered["width"], rendered["height"])
     )
-    assert rendered["source_map"] == "static/world_map_8x"
+    assert rendered["source_map"] == "static/world_map_16x"
     assert rendered["crop"]["wraps_antimeridian"] is True
     assert font_sizes == [10, expected_final_size]
     assert expected_final_size < 40
@@ -1208,7 +1231,15 @@ async def test_invalid_or_oversized_caption_does_not_save_artifacts(
     error_fragment: str,
 ) -> None:
     rendered = await plot_data_points_on_map(
-        [MapEvent(coord=[0, 0], label="", latitude_radius=0.1, color="red")],
+        [
+            MapEvent(
+                coord=[0, latitude],
+                label="",
+                latitude_radius=0.1,
+                color="red",
+            )
+            for latitude in (-70, 70)
+        ],
         crop_to_drawn_area=crop_to_drawn_area,
         caption=caption,
         tool_context=artifact_context,

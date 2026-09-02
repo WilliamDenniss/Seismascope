@@ -69,6 +69,30 @@ def _single_image_source(filename: str, size: int) -> MapSource:
     )
 
 
+def _numbered_grid_source(scale: int, grid_size: int, tile_size: int) -> MapSource:
+    world_size = grid_size * tile_size
+    if world_size != 2048 * scale:
+        raise ValueError("Tiled map source dimensions do not match its scale.")
+    return MapSource(
+        artifact=f"static/world_map_{scale}x",
+        size=(world_size, world_size),
+        tiles=tuple(
+            MapTile(
+                name=f"x{x}_y{y}",
+                path=_STATIC_MAP_DIR / f"world_map_{scale}x_x{x}_y{y}.png",
+                box=(
+                    x * tile_size,
+                    y * tile_size,
+                    (x + 1) * tile_size,
+                    (y + 1) * tile_size,
+                ),
+            )
+            for x in range(grid_size)
+            for y in range(grid_size)
+        ),
+    )
+
+
 MAP_SOURCES: list[MapSource] = [
     _single_image_source("world_map.png", 2048),
     _single_image_source("world_map_2x.png", 4096),
@@ -99,6 +123,7 @@ MAP_SOURCES: list[MapSource] = [
             ),
         ),
     ),
+    _numbered_grid_source(scale=16, grid_size=4, tile_size=8192),
 ]
 MINIMUM_CROP_LONG_EDGE_PX = 1400
 MINIMUM_AUTOMATIC_CROP_PADDING_PX = 16

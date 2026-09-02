@@ -97,7 +97,7 @@ Licensed under the [Apache License 2.0](LICENSE).
 
 The bundled base-map images in `static/world_map.png`,
 `static/world_map_2x.png`, `static/world_map_4x.png`, and the four
-`static/world_map_8x_*.png` quadrant tiles use the
+`static/world_map_8x_*.png` and sixteen `static/world_map_16x_*.png` tiles use the
 [OpenFreeMap Liberty style](https://openfreemap.org/) and
 [OpenMapTiles](https://openmaptiles.org/). Map data ©
 [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available
