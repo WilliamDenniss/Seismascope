@@ -226,6 +226,75 @@ def test_automatic_crop_padding_scales_with_marker_extent(
     )
 
 
+@pytest.mark.parametrize(
+    ("magnitude", "expected_radius"),
+    [
+        (None, 5.0),
+        (-1.0, 5.0),
+        (0.0, 5.0),
+        (5.0, 12.5),
+        (6.1, 14.15),
+        (9.0, 18.0),
+        (10.0, 18.0),
+    ],
+)
+def test_dense_event_radius_is_bounded_screen_space(
+    magnitude: float | None,
+    expected_radius: float,
+) -> None:
+    assert map_tools._dense_event_radius_px(magnitude) == pytest.approx(
+        expected_radius
+    )
+
+
+def test_screen_marker_size_is_independent_of_basemap_scale() -> None:
+    item = {"radius_mode": "screen_px", "radius_px": 14.0}
+
+    assert [
+        map_tools._rendered_marker_radius(item, scale) for scale in (1, 4, 8, 16)
+    ] == [14.0, 14.0, 14.0, 14.0]
+    assert map_tools._rendered_marker_outline_width(item, 14.0, 32768) == 3
+
+
+def test_screen_marker_renders_at_requested_size_on_sixteen_x_crop() -> None:
+    image_bytes, spec, _warnings, _skipped = map_tools._render_map(
+        [
+            MapEvent(
+                coord=[139.69, 35.69],
+                label="",
+                latitude_radius=0.1,
+                color="#ff00ff",
+            )
+        ],
+        crop_to_drawn_area=True,
+        screen_marker_radii_px=[14.0],
+    )
+
+    assert spec["source"]["scale"] == 16
+    with Image.open(BytesIO(image_bytes)) as image:
+        rgb = image.convert("RGB")
+        marker_pixels = [
+            (x, y)
+            for y in range(rgb.height)
+            for x in range(rgb.width)
+            if (
+                rgb.getpixel((x, y))[0] > 240
+                and rgb.getpixel((x, y))[1] < 20
+                and rgb.getpixel((x, y))[2] > 240
+            )
+        ]
+
+    assert marker_pixels
+    marker_width = max(x for x, _ in marker_pixels) - min(
+        x for x, _ in marker_pixels
+    ) + 1
+    marker_height = max(y for _, y in marker_pixels) - min(
+        y for _, y in marker_pixels
+    ) + 1
+    assert marker_width <= 30
+    assert marker_height <= 30
+
+
 def test_crop_upscaling_does_not_inflate_earthquake_symbols() -> None:
     image_bytes, spec, _warnings, _skipped = map_tools._render_map(
         [
@@ -459,7 +528,13 @@ async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(
     assert spec["event_source"]["style"] == {
         "color": "magnitude_bins",
         "labels": "magnitude >= 6",
-        "radius": "magnitude_scaled",
+        "radius": {
+            "mode": "magnitude_scaled_screen_px",
+            "base_px": 5.0,
+            "pixels_per_magnitude": 1.5,
+            "minimum_px": 5.0,
+            "maximum_px": 18.0,
+        },
     }
 
 

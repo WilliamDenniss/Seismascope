@@ -18,10 +18,11 @@ This skill draws events; it does not decide which earthquakes are relevant.
   `download_usgs_feed`. Do not query, copy, or serialize the event array. This
   artifact-backed path loads and renders every matching event inside the tool,
   so its function call stays small even for the monthly catalog.
-- The catalog-backed renderer applies deterministic magnitude colors and marker
-  sizes, labels only magnitude 6+ events, and saves a compact specification that
-  references the source catalog artifact. Use it for requests such as "all
-  earthquakes in the last month."
+- The catalog-backed renderer applies deterministic magnitude colors and
+  bounded screen-space marker sizes, labels only magnitude 6+ events, and saves
+  a compact specification that references the source catalog artifact. Marker
+  size is renderer policy and does not change with basemap resolution. Use this
+  path for requests such as "all earthquakes in the last month."
 - For a full historical result, call `plot_usgs_search_on_map` with the exact
   artifact version from `search_usgs_events`. The map specification retains the
   Event API query provenance without serializing the event array. If the source

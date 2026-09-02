@@ -27,8 +27,11 @@ Catalog-scale maps use the same projection and marker renderer but store an
 magnitude styling instead of copying every marker into the map specification.
 This keeps both the model tool call and later specification loads bounded. The
 renderer colors magnitude bands blue, green, yellow, orange, and red; uses gray
-when magnitude is unavailable; scales circle radius by magnitude; and labels
-only magnitude 6+ events.
+when magnitude is unavailable; scales a bounded 5–18 pixel circle radius by
+magnitude; and labels only magnitude 6+ events. Catalog marker radius and its
+2–4 pixel outline are screen-space styling: basemap resolution and crop-only
+enlargement do not change them, and their visual radius does not expand the
+geographic event-center extent used for framing.
 
 Colors may be Pillow-compatible names, hex values, or RGBA values. Circles are
 translucent with opaque outlines. Smaller circles are drawn first so larger
@@ -104,5 +107,7 @@ saved spec records the standard and source padding, native crop dimensions,
 enlargement factor, target, whether it was met, selected source map, and tile
 artifacts.
 
-The circle is a screen-space circle whose pixel radius comes from the projected
-north/south latitude span. It is not a geodesic circle on Earth's surface.
+For agent-supplied events, the circle's pixel radius comes from the projected
+north/south `latitude_radius` span. It is not a geodesic circle on Earth's
+surface. Catalog-backed maps instead use the bounded screen-space magnitude
+styling described above.

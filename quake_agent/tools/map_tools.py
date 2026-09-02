@@ -178,6 +178,10 @@ class MapCaption(BaseModel):
 
 
 DENSE_MAP_LABEL_MIN_MAGNITUDE = 6.0
+DENSE_MAP_MIN_RADIUS_PX = 5.0
+DENSE_MAP_MAX_RADIUS_PX = 18.0
+DENSE_MAP_RADIUS_BASE_PX = 5.0
+DENSE_MAP_RADIUS_PER_MAGNITUDE_PX = 1.5
 DENSE_MAP_MAGNITUDE_LEGEND = MapLegend(
     title="Magnitude",
     items=[
@@ -282,11 +286,32 @@ def _dense_event_color(magnitude: float | None) -> str:
     return "#dc2626"
 
 
-def _dense_event_radius(magnitude: float | None) -> float:
-    """Return a bounded angular marker radius that grows with magnitude."""
+def _dense_event_radius_px(magnitude: float | None) -> float:
+    """Return a bounded screen-space marker radius that grows with magnitude."""
     if magnitude is None:
-        return 0.1
-    return max(0.1, min(1.0, 0.1 * 2 ** (magnitude / 2)))
+        return DENSE_MAP_MIN_RADIUS_PX
+    return max(
+        DENSE_MAP_MIN_RADIUS_PX,
+        min(
+            DENSE_MAP_MAX_RADIUS_PX,
+            DENSE_MAP_RADIUS_BASE_PX
+            + max(0.0, magnitude) * DENSE_MAP_RADIUS_PER_MAGNITUDE_PX,
+        ),
+    )
+
+
+def _dense_map_style() -> dict[str, Any]:
+    return {
+        "color": "magnitude_bins",
+        "radius": {
+            "mode": "magnitude_scaled_screen_px",
+            "base_px": DENSE_MAP_RADIUS_BASE_PX,
+            "pixels_per_magnitude": DENSE_MAP_RADIUS_PER_MAGNITUDE_PX,
+            "minimum_px": DENSE_MAP_MIN_RADIUS_PX,
+            "maximum_px": DENSE_MAP_MAX_RADIUS_PX,
+        },
+        "labels": f"magnitude >= {DENSE_MAP_LABEL_MIN_MAGNITUDE:g}",
+    }
 
 
 def _dense_event_label(event: dict[str, Any]) -> str:
@@ -778,6 +803,25 @@ def _viewport_x_positions(
     ]
 
 
+def _rendered_marker_radius(item: dict[str, Any], source_scale: int) -> float:
+    if item["radius_mode"] == "screen_px":
+        return float(item["radius_px"])
+    return float(item["radius_px"]) * source_scale
+
+
+def _rendered_marker_outline_width(
+    item: dict[str, Any],
+    radius: float,
+    source_width: int,
+) -> int:
+    if item["radius_mode"] == "screen_px":
+        return max(2, min(4, round(radius / 5)))
+    return min(
+        max(2, round(source_width / 1024)),
+        max(1, round(radius * 0.25)),
+    )
+
+
 def _render_scaled_crop(
     prepared: list[dict[str, Any]],
     placed_labels: list[dict[str, Any]],
@@ -805,19 +849,24 @@ def _render_scaled_crop(
     crop_width = int(scaled_crop["width"])
     content_overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(content_overlay, "RGBA")
-    maximum_outline_width = max(2, round(source_size[0] / 1024))
     for item in prepared:
         # Crop enlargement interpolates the basemap to a useful output size;
         # it must not also inflate earthquake symbols into overlapping blobs.
-        radius = item["radius_px"] * scale
-        outline_width = min(
-            maximum_outline_width,
-            max(1, round(radius * 0.25)),
+        radius = _rendered_marker_radius(item, scale)
+        outline_width = _rendered_marker_outline_width(
+            item,
+            radius,
+            source_size[0],
+        )
+        native_visibility_radius = (
+            radius / upscale_factor
+            if item["radius_mode"] == "screen_px"
+            else radius
         )
         y = (item["y"] * scale - crop_y) * upscale_factor
         native_x_positions = _viewport_x_positions(
             item["x"] * scale,
-            item["radius_px"] * scale,
+            native_visibility_radius,
             crop_x,
             crop_width,
             source_size[0],
@@ -844,11 +893,17 @@ def _render_scaled_crop(
         text_width = text_box[2] - text_box[0]
         text_height = text_box[3] - text_box[1]
         center_y = (item["y"] * scale - crop_y) * upscale_factor
+        rendered_radius = _rendered_marker_radius(item, scale)
+        native_visibility_radius = (
+            rendered_radius / upscale_factor
+            if item["radius_mode"] == "screen_px"
+            else rendered_radius
+        )
         centers = [
             position * upscale_factor
             for position in _viewport_x_positions(
                 item["x"] * scale,
-                item["radius_px"] * scale,
+                native_visibility_radius,
                 crop_x,
                 crop_width,
                 source_size[0],
@@ -857,7 +912,7 @@ def _render_scaled_crop(
         chosen, chosen_box = _choose_label_position(
             centers,
             center_y,
-            item["radius_px"] * scale,
+            rendered_radius,
             (text_width, text_height),
             base.size,
             occupied_labels,
@@ -1087,7 +1142,16 @@ def _render_map(
     crop_to_drawn_area: bool = False,
     legend: MapLegend | None = None,
     caption: MapCaption | None = None,
+    screen_marker_radii_px: list[float] | None = None,
 ) -> tuple[bytes, dict[str, Any], list[str], int]:
+    if screen_marker_radii_px is not None:
+        if len(screen_marker_radii_px) != len(events):
+            raise ValueError("Screen marker radii must match the event count.")
+        if any(
+            not math.isfinite(radius) or radius <= 0
+            for radius in screen_marker_radii_px
+        ):
+            raise ValueError("Screen marker radii must be finite and positive.")
     prepared_legend = _prepare_legend(legend)
     prepared_caption = _prepare_caption(caption)
     standard_source = MAP_SOURCES[0]
@@ -1106,6 +1170,8 @@ def _render_map(
     width, height = image.size
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
     draw = ImageDraw.Draw(overlay)
+    marker_extent_overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
+    marker_extent_draw = ImageDraw.Draw(marker_extent_overlay)
     font = _load_label_font()
     warnings: list[str] = []
     prepared: list[dict[str, Any]] = []
@@ -1148,11 +1214,18 @@ def _render_map(
         x, y = project_web_mercator(
             normalized_longitude, clamped_latitude, width, height
         )
-        radius = max(
-            1.0,
-            latitude_radius_to_pixels(
-                clamped_latitude, event.latitude_radius, height
-            ),
+        radius_mode = (
+            "screen_px" if screen_marker_radii_px is not None else "geographic"
+        )
+        radius = (
+            float(screen_marker_radii_px[index])
+            if screen_marker_radii_px is not None
+            else max(
+                1.0,
+                latitude_radius_to_pixels(
+                    clamped_latitude, event.latitude_radius, height
+                ),
+            )
         )
         fill, outline = _marker_colors(rgba)
         prepared.append(
@@ -1168,13 +1241,21 @@ def _render_map(
                 "x": x,
                 "y": y,
                 "radius_px": radius,
+                "radius_mode": radius_mode,
             }
         )
 
     prepared.sort(key=lambda item: (item["radius_px"], item["index"]))
-    outline_width = max(2, round(width / 1024))
     for item in prepared:
-        for center_x in _wrapped_circle_centers(item["x"], item["radius_px"], width):
+        outline_width = (
+            _rendered_marker_outline_width(item, item["radius_px"], width)
+            if item["radius_mode"] == "screen_px"
+            else max(2, round(width / 1024))
+        )
+        visual_centers = _wrapped_circle_centers(
+            item["x"], item["radius_px"], width
+        )
+        for center_x in visual_centers:
             box = (
                 center_x - item["radius_px"],
                 item["y"] - item["radius_px"],
@@ -1187,8 +1268,26 @@ def _render_map(
                 outline=item["outline"],
                 width=outline_width,
             )
+        crop_radius = (
+            1.0 if item["radius_mode"] == "screen_px" else item["radius_px"]
+        )
+        crop_centers = (
+            _wrapped_circle_centers(item["x"], crop_radius, width)
+            if item["radius_mode"] == "screen_px"
+            else visual_centers
+        )
+        for center_x in crop_centers:
+            marker_extent_draw.ellipse(
+                (
+                    center_x - crop_radius,
+                    item["y"] - crop_radius,
+                    center_x + crop_radius,
+                    item["y"] + crop_radius,
+                ),
+                fill=(255, 255, 255, 255),
+            )
 
-    marker_crop = _content_crop(overlay, 0)
+    marker_crop = _content_crop(marker_extent_overlay, 0)
     crop_padding_px, marker_long_edge_px = _automatic_crop_padding(marker_crop)
 
     crop: dict[str, int | bool] = {
@@ -1202,7 +1301,7 @@ def _render_map(
     if crop_to_drawn_area:
         # Geographic framing is marker-only. Labels are reflowed within the
         # chosen viewport so their text length cannot zoom the map out.
-        content_crop = _content_crop(overlay, crop_padding_px)
+        content_crop = _content_crop(marker_extent_overlay, crop_padding_px)
         if content_crop is None:
             warnings.append(
                 "Crop was requested but there was no drawable content; the full map was retained."
@@ -1469,11 +1568,16 @@ async def plot_usgs_feed_on_map(
     if not selected:
         return {"status": "empty", **provenance}
 
+    screen_marker_radii_px = [
+        _dense_event_radius_px(event["magnitude"]) for event in selected
+    ]
     map_events = [
         MapEvent(
             coord=event["coord"],
             label=_dense_event_label(event),
-            latitude_radius=_dense_event_radius(event["magnitude"]),
+            # Catalog markers use the private screen-space radii above. This
+            # positive placeholder satisfies the declarative event contract.
+            latitude_radius=0.1,
             color=_dense_event_color(event["magnitude"]),
         )
         for event in selected
@@ -1484,6 +1588,7 @@ async def plot_usgs_feed_on_map(
             crop_to_drawn_area=crop_to_drawn_area,
             legend=DENSE_MAP_MAGNITUDE_LEGEND,
             caption=caption,
+            screen_marker_radii_px=screen_marker_radii_px,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         return {"status": "error", "error": str(exc), **provenance}
@@ -1499,11 +1604,7 @@ async def plot_usgs_feed_on_map(
             "start_time": start_time,
             "end_time": end_time,
         },
-        "style": {
-            "color": "magnitude_bins",
-            "radius": "magnitude_scaled",
-            "labels": f"magnitude >= {DENSE_MAP_LABEL_MIN_MAGNITUDE:g}",
-        },
+        "style": _dense_map_style(),
     }
     # The catalog artifact plus the deterministic style above is the source of
     # truth. Avoid duplicating thousands of markers in the map spec, where a
@@ -1675,11 +1776,16 @@ async def plot_usgs_search_on_map(
     if not selected:
         return {"status": "empty", **provenance}
 
+    screen_marker_radii_px = [
+        _dense_event_radius_px(event["magnitude"]) for event in selected
+    ]
     map_events = [
         MapEvent(
             coord=event["coord"],
             label=_dense_event_label(event),
-            latitude_radius=_dense_event_radius(event["magnitude"]),
+            # Catalog markers use the private screen-space radii above. This
+            # positive placeholder satisfies the declarative event contract.
+            latitude_radius=0.1,
             color=_dense_event_color(event["magnitude"]),
         )
         for event in selected
@@ -1690,6 +1796,7 @@ async def plot_usgs_search_on_map(
             crop_to_drawn_area=crop_to_drawn_area,
             legend=DENSE_MAP_MAGNITUDE_LEGEND,
             caption=caption,
+            screen_marker_radii_px=screen_marker_radii_px,
         )
     except (FileNotFoundError, OSError, ValueError) as exc:
         return {"status": "error", "error": str(exc), **provenance}
@@ -1706,11 +1813,7 @@ async def plot_usgs_search_on_map(
             "start_time": start_time,
             "end_time": end_time,
         },
-        "style": {
-            "color": "magnitude_bins",
-            "radius": "magnitude_scaled",
-            "labels": f"magnitude >= {DENSE_MAP_LABEL_MIN_MAGNITUDE:g}",
-        },
+        "style": _dense_map_style(),
     }
     spec["events"] = []
 
