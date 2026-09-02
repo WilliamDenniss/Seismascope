@@ -22,7 +22,7 @@ Example prompts:
 - Use the monthly feed and show the ten largest events.
 - Map magnitude 5+ earthquakes within 100 km of Tokyo during the last five years.
 - Keep the same circles, make the deepest events blue, and remove other labels.
-- Crop the current map to the area containing the circles, with 48 pixels of padding.
+- Crop the current map to the area containing the circles.
 - Refresh the hourly data and tell me whether any mapped events changed.
 
 ## Run the public web app
@@ -96,7 +96,8 @@ Licensed under the [Apache License 2.0](LICENSE).
 ## Third-party asset attribution
 
 The bundled base-map images in `static/world_map.png`,
-`static/world_map_2x.png`, and `static/world_map_4x.png` use the
+`static/world_map_2x.png`, `static/world_map_4x.png`, and the four
+`static/world_map_8x_*.png` quadrant tiles use the
 [OpenFreeMap Liberty style](https://openfreemap.org/) and
 [OpenMapTiles](https://openmaptiles.org/). Map data ©
 [OpenStreetMap contributors](https://www.openstreetmap.org/copyright), available

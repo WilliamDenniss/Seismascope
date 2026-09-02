@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import dataclass
 from io import BytesIO
 import json
 import math
@@ -34,11 +35,70 @@ from .data_tools import _state_prefix
 
 WEB_MERCATOR_MAX_LAT = 85.05112878
 _STATIC_MAP_DIR = Path(__file__).resolve().parents[2] / "static"
-MapSource = tuple[Path, tuple[int, int]]
+
+
+@dataclass(frozen=True)
+class MapTile:
+    """One rectangular image within a full-world map source."""
+
+    name: str
+    path: Path
+    box: tuple[int, int, int, int]
+
+
+@dataclass(frozen=True)
+class MapSource:
+    """A full-world basemap backed by one image or a fixed tile grid."""
+
+    artifact: str
+    size: tuple[int, int]
+    tiles: tuple[MapTile, ...]
+
+
+def _single_image_source(filename: str, size: int) -> MapSource:
+    return MapSource(
+        artifact=f"static/{filename}",
+        size=(size, size),
+        tiles=(
+            MapTile(
+                name="full_world",
+                path=_STATIC_MAP_DIR / filename,
+                box=(0, 0, size, size),
+            ),
+        ),
+    )
+
+
 MAP_SOURCES: list[MapSource] = [
-    (_STATIC_MAP_DIR / "world_map.png", (2048, 2048)),
-    (_STATIC_MAP_DIR / "world_map_2x.png", (4096, 4096)),
-    (_STATIC_MAP_DIR / "world_map_4x.png", (8192, 8192)),
+    _single_image_source("world_map.png", 2048),
+    _single_image_source("world_map_2x.png", 4096),
+    _single_image_source("world_map_4x.png", 8192),
+    MapSource(
+        artifact="static/world_map_8x",
+        size=(16384, 16384),
+        tiles=(
+            MapTile(
+                "nw",
+                _STATIC_MAP_DIR / "world_map_8x_nw.png",
+                (0, 0, 8192, 8192),
+            ),
+            MapTile(
+                "ne",
+                _STATIC_MAP_DIR / "world_map_8x_ne.png",
+                (8192, 0, 16384, 8192),
+            ),
+            MapTile(
+                "sw",
+                _STATIC_MAP_DIR / "world_map_8x_sw.png",
+                (0, 8192, 8192, 16384),
+            ),
+            MapTile(
+                "se",
+                _STATIC_MAP_DIR / "world_map_8x_se.png",
+                (8192, 8192, 16384, 16384),
+            ),
+        ),
+    ),
 ]
 MINIMUM_CROP_LONG_EDGE_PX = 1400
 MINIMUM_AUTOMATIC_CROP_PADDING_PX = 16
@@ -582,8 +642,8 @@ def _visible_bounds(
 
 
 def _map_source_scale(source: MapSource) -> int:
-    _, (standard_width, standard_height) = MAP_SOURCES[0]
-    _, (source_width, source_height) = source
+    standard_width, standard_height = MAP_SOURCES[0].size
+    source_width, source_height = source.size
     width_scale, width_remainder = divmod(source_width, standard_width)
     height_scale, height_remainder = divmod(source_height, standard_height)
     if width_remainder or height_remainder or width_scale != height_scale:
@@ -614,6 +674,66 @@ def _scaled_crop(
     }
 
 
+def _crop_map_source(
+    source: MapSource,
+    crop: dict[str, int | bool],
+) -> Image.Image:
+    """Crop a full-world source, loading only tiles that intersect the crop."""
+    source_width, source_height = source.size
+    source_x = int(crop["source_x"])
+    source_y = int(crop["source_y"])
+    crop_width = int(crop["width"])
+    crop_height = int(crop["height"])
+    crop_bottom = source_y + crop_height
+    if source_y < 0 or crop_bottom > source_height:
+        raise ValueError("Map crop exceeds the source's vertical bounds.")
+
+    if crop["wraps_antimeridian"]:
+        right_width = source_width - source_x
+        horizontal_spans = (
+            (source_x, source_width, 0),
+            (0, crop_width - right_width, right_width),
+        )
+    else:
+        horizontal_spans = ((source_x, source_x + crop_width, 0),)
+
+    cropped = Image.new("RGBA", (crop_width, crop_height), (0, 0, 0, 0))
+    for tile in source.tiles:
+        tile_left, tile_top, tile_right, tile_bottom = tile.box
+        intersections: list[tuple[int, int, int, int, int]] = []
+        for span_left, span_right, destination_x in horizontal_spans:
+            left = max(tile_left, span_left)
+            top = max(tile_top, source_y)
+            right = min(tile_right, span_right)
+            bottom = min(tile_bottom, crop_bottom)
+            if left < right and top < bottom:
+                output_x = destination_x + left - span_left
+                intersections.append((left, top, right, bottom, output_x))
+        if not intersections:
+            continue
+        if not tile.path.is_file():
+            raise FileNotFoundError(f"Base map tile not found at {tile.path}.")
+        expected_size = (tile_right - tile_left, tile_bottom - tile_top)
+        with Image.open(tile.path) as tile_image:
+            if tile_image.size != expected_size:
+                raise ValueError(
+                    f"Base map tile {tile.name} must be "
+                    f"{expected_size[0]}x{expected_size[1]}, not "
+                    f"{tile_image.width}x{tile_image.height}."
+                )
+            for left, top, right, bottom, output_x in intersections:
+                tile_crop = tile_image.crop(
+                    (
+                        left - tile_left,
+                        top - tile_top,
+                        right - tile_left,
+                        bottom - tile_top,
+                    )
+                ).convert("RGBA")
+                cropped.paste(tile_crop, (output_x, top - source_y))
+    return cropped
+
+
 def _viewport_x_positions(
     full_x: float,
     radius: float,
@@ -641,19 +761,10 @@ def _render_scaled_crop(
     warnings: list[str],
     upscale_factor: float = 1.0,
 ) -> tuple[Image.Image, dict[str, int | bool], Image.Image]:
-    source_path, source_size = source
+    source_size = source.size
     scale = _map_source_scale(source)
     scaled_crop = _scaled_crop(standard_crop, scale)
-    if not source_path.is_file():
-        raise FileNotFoundError(f"Scaled base map not found at {source_path}.")
-    with Image.open(source_path) as source_image:
-        if source_image.size != source_size:
-            raise ValueError(
-                "Scaled base map must be "
-                f"{source_size[0]}x{source_size[1]}, "
-                f"not {source_image.width}x{source_image.height}."
-            )
-        base = _crop_wrapped_image(source_image, scaled_crop).convert("RGBA")
+    base = _crop_map_source(source, scaled_crop)
 
     if upscale_factor > 1.0:
         base = base.resize(
@@ -954,16 +1065,18 @@ def _render_map(
 ) -> tuple[bytes, dict[str, Any], list[str], int]:
     prepared_legend = _prepare_legend(legend)
     prepared_caption = _prepare_caption(caption)
-    standard_path, standard_size = MAP_SOURCES[0]
-    if not standard_path.is_file():
-        raise FileNotFoundError(f"Base map not found at {standard_path}.")
-    with Image.open(standard_path) as source:
-        if source.size != standard_size:
-            raise ValueError(
-                f"Base map must be {standard_size[0]}x{standard_size[1]}, "
-                f"not {source.width}x{source.height}."
-            )
-        image = source.convert("RGBA")
+    standard_source = MAP_SOURCES[0]
+    standard_size = standard_source.size
+    image = _crop_map_source(
+        standard_source,
+        {
+            "source_x": 0,
+            "source_y": 0,
+            "width": standard_size[0],
+            "height": standard_size[1],
+            "wraps_antimeridian": False,
+        },
+    )
 
     width, height = image.size
     overlay = Image.new("RGBA", image.size, (0, 0, 0, 0))
@@ -1117,7 +1230,7 @@ def _render_map(
     selected_source = MAP_SOURCES[0]
     if crop_applied:
         selected_source = _select_map_source(crop)
-    source_path, source_size = selected_source
+    source_size = selected_source.size
     source_scale = _map_source_scale(selected_source)
     source_padding_px = crop_padding_px * source_scale
     native_width = int(crop["width"]) * source_scale
@@ -1169,7 +1282,7 @@ def _render_map(
         "projection": "web_mercator",
         "bounds": _visible_bounds(crop, width, height),
         "source": {
-            "artifact": str(source_path.relative_to(source_path.parents[1])),
+            "artifact": selected_source.artifact,
             "width": width,
             "height": height,
             "bounds": {
@@ -1179,6 +1292,19 @@ def _render_map(
                 "south": -WEB_MERCATOR_MAX_LAT,
             },
             "scale": source_scale,
+            "tiles": [
+                {
+                    "name": tile.name,
+                    "artifact": str(tile.path.relative_to(_STATIC_MAP_DIR.parent)),
+                    "box": {
+                        "source_x": tile.box[0],
+                        "source_y": tile.box[1],
+                        "width": tile.box[2] - tile.box[0],
+                        "height": tile.box[3] - tile.box[1],
+                    },
+                }
+                for tile in selected_source.tiles
+            ],
         },
         "crop": {
             "requested": crop_to_drawn_area,

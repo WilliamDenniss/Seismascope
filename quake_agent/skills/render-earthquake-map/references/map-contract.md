@@ -3,8 +3,10 @@
 The immutable standard base image is `static/world_map.png`, exactly 2048 by
 2048 pixels. `static/world_map_2x.png` and `static/world_map_4x.png` are the
 corresponding 4096 by 4096 and 8192 by 8192 pixel bases used for progressively
-smaller crops. All three are canonical full-world Web Mercator maps spanning
-longitudes −180° through 180° and latitudes −85.05112878° through 85.05112878°.
+smaller crops. Four quadrant images named `static/world_map_8x_{nw,ne,sw,se}.png`
+form an effective 16384 by 16384 source; every tile is 8192 by 8192 pixels. All
+levels are canonical full-world Web Mercator maps spanning longitudes −180°
+through 180° and latitudes −85.05112878° through 85.05112878°.
 
 Each event has this shape:
 
@@ -74,9 +76,9 @@ source-map selection, or the minimum-resolution calculation. The saved map
 specification records the caption and a `map_viewport` rectangle that locates
 the geographic map within the taller captioned PNG.
 
-Set `crop_to_drawn_area=true` to crop the result to the smallest pixel area that
-contains every rendered circle and placed label. The renderer calculates
-context padding from the marker-only long edge: 50 percent per side, clamped
+Set `crop_to_drawn_area=true` to crop the result around the rendered circles.
+The renderer calculates context padding from the marker-only long edge: 50
+percent per side, clamped
 from 16 through 96 standard-map pixels. Labels do not affect geographic bounds;
 the renderer places them within the selected viewport and warns when one cannot
 fit without overlap. Horizontal cropping treats the world map as circular: a
@@ -85,17 +87,19 @@ crossing bounds with `west > east`. The saved map spec records the marker extent
 calculated padding, crop rectangle, dimensions, visible bounds, and wrapping
 behavior.
 
-For a requested crop, the renderer considers the 2048, 4096, and 8192 pixel
-sources in that order and selects the first whose cropped output has a long edge
-of at least 1400 pixels. If even the 8192 pixel source cannot meet the target,
-the renderer enlarges only the cropped base image with Lanczos resampling by up
-to 4x, then redraws markers and labels at the output resolution. Marker centers
-follow the enlarged viewport, but their radii and outlines remain at the selected
-source's native scale so raster interpolation cannot turn nearby earthquakes
-into overlapping blobs. The renderer warns when the enlarged result still
-cannot reach the target. The saved spec records the standard and source padding,
-native crop dimensions, enlargement factor, target, whether it was met, and the
-selected source map.
+For a requested crop, the renderer considers the 2048, 4096, 8192, and effective
+16384 pixel sources in that order and selects the first whose cropped output has
+a long edge of at least 1400 pixels. Crops from the 16384 source load and stitch
+only intersecting quadrant tiles, including across the antimeridian. If even
+that source cannot meet the target, the renderer enlarges only the cropped base
+image with Lanczos resampling by up to 4x, then redraws markers and labels at the
+output resolution. Marker centers follow the enlarged viewport, but their radii
+and outlines remain at the selected source's native scale so raster
+interpolation cannot turn nearby earthquakes into overlapping blobs. The
+renderer warns when the enlarged result still cannot reach the target. The
+saved spec records the standard and source padding, native crop dimensions,
+enlargement factor, target, whether it was met, selected source map, and tile
+artifacts.
 
 The circle is a screen-space circle whose pixel radius comes from the projected
 north/south latitude span. It is not a geodesic circle on Earth's surface.
