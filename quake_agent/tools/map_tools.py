@@ -182,6 +182,11 @@ DENSE_MAP_MIN_RADIUS_PX = 5.0
 DENSE_MAP_MAX_RADIUS_PX = 18.0
 DENSE_MAP_RADIUS_BASE_PX = 5.0
 DENSE_MAP_RADIUS_PER_MAGNITUDE_PX = 1.5
+DENSE_MAP_DEFAULT_MARKER_SCALE = 1.0
+DENSE_MAP_MIN_MARKER_SCALE = 0.6
+DENSE_MAP_MAX_MARKER_SCALE = 1.5
+DENSE_MAP_ABSOLUTE_MIN_RADIUS_PX = 3.0
+DENSE_MAP_ABSOLUTE_MAX_RADIUS_PX = 24.0
 DENSE_MAP_MAGNITUDE_LEGEND = MapLegend(
     title="Magnitude",
     items=[
@@ -286,29 +291,67 @@ def _dense_event_color(magnitude: float | None) -> str:
     return "#dc2626"
 
 
-def _dense_event_radius_px(magnitude: float | None) -> float:
+def _normalize_dense_map_marker_scale(marker_scale: float) -> float:
+    if (
+        isinstance(marker_scale, bool)
+        or not isinstance(marker_scale, (int, float))
+        or not math.isfinite(marker_scale)
+        or not DENSE_MAP_MIN_MARKER_SCALE
+        <= marker_scale
+        <= DENSE_MAP_MAX_MARKER_SCALE
+    ):
+        raise ValueError(
+            "marker_scale must be finite and between "
+            f"{DENSE_MAP_MIN_MARKER_SCALE:g} and "
+            f"{DENSE_MAP_MAX_MARKER_SCALE:g}."
+        )
+    return float(marker_scale)
+
+
+def _dense_event_radius_px(
+    magnitude: float | None,
+    marker_scale: float = DENSE_MAP_DEFAULT_MARKER_SCALE,
+) -> float:
     """Return a bounded screen-space marker radius that grows with magnitude."""
+    marker_scale = _normalize_dense_map_marker_scale(marker_scale)
     if magnitude is None:
-        return DENSE_MAP_MIN_RADIUS_PX
+        default_radius = DENSE_MAP_MIN_RADIUS_PX
+    else:
+        default_radius = max(
+            DENSE_MAP_MIN_RADIUS_PX,
+            min(
+                DENSE_MAP_MAX_RADIUS_PX,
+                DENSE_MAP_RADIUS_BASE_PX
+                + max(0.0, magnitude) * DENSE_MAP_RADIUS_PER_MAGNITUDE_PX,
+            ),
+        )
     return max(
-        DENSE_MAP_MIN_RADIUS_PX,
-        min(
-            DENSE_MAP_MAX_RADIUS_PX,
-            DENSE_MAP_RADIUS_BASE_PX
-            + max(0.0, magnitude) * DENSE_MAP_RADIUS_PER_MAGNITUDE_PX,
-        ),
+        DENSE_MAP_ABSOLUTE_MIN_RADIUS_PX,
+        min(DENSE_MAP_ABSOLUTE_MAX_RADIUS_PX, default_radius * marker_scale),
     )
 
 
-def _dense_map_style() -> dict[str, Any]:
+def _dense_map_style(
+    marker_scale: float = DENSE_MAP_DEFAULT_MARKER_SCALE,
+) -> dict[str, Any]:
+    marker_scale = _normalize_dense_map_marker_scale(marker_scale)
     return {
         "color": "magnitude_bins",
         "radius": {
             "mode": "magnitude_scaled_screen_px",
-            "base_px": DENSE_MAP_RADIUS_BASE_PX,
-            "pixels_per_magnitude": DENSE_MAP_RADIUS_PER_MAGNITUDE_PX,
-            "minimum_px": DENSE_MAP_MIN_RADIUS_PX,
-            "maximum_px": DENSE_MAP_MAX_RADIUS_PX,
+            "scale": marker_scale,
+            "base_px": DENSE_MAP_RADIUS_BASE_PX * marker_scale,
+            "pixels_per_magnitude": (
+                DENSE_MAP_RADIUS_PER_MAGNITUDE_PX * marker_scale
+            ),
+            "minimum_px": max(
+                DENSE_MAP_ABSOLUTE_MIN_RADIUS_PX,
+                DENSE_MAP_MIN_RADIUS_PX * marker_scale,
+            ),
+            "maximum_px": min(
+                DENSE_MAP_ABSOLUTE_MAX_RADIUS_PX,
+                DENSE_MAP_MAX_RADIUS_PX * marker_scale,
+            ),
         },
         "labels": f"magnitude >= {DENSE_MAP_LABEL_MIN_MAGNITUDE:g}",
     }
@@ -815,7 +858,8 @@ def _rendered_marker_outline_width(
     source_width: int,
 ) -> int:
     if item["radius_mode"] == "screen_px":
-        return max(2, min(4, round(radius / 5)))
+        minimum_width = 1 if radius < DENSE_MAP_MIN_RADIUS_PX else 2
+        return max(minimum_width, min(4, round(radius / 5)))
     return min(
         max(2, round(source_width / 1024)),
         max(1, round(radius * 0.25)),
@@ -1477,6 +1521,7 @@ async def plot_usgs_feed_on_map(
     artifact_name: str = DEFAULT_MAP_ARTIFACT,
     crop_to_drawn_area: bool = False,
     caption: MapCaption | None = None,
+    marker_scale: float = DENSE_MAP_DEFAULT_MARKER_SCALE,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """Plot a stored USGS catalog without putting its events in model context.
@@ -1493,6 +1538,8 @@ async def plot_usgs_feed_on_map(
         crop_to_drawn_area: Crop to the filtered events instead of keeping the
             full-world view.
         caption: Optional title and date rendered above the map.
+        marker_scale: Relative catalog marker size from 0.6 through 1.5. Use
+            smaller values for dense maps and larger values for sparse maps.
 
     Returns:
         Compact catalog provenance and versioned map artifact handles. Event
@@ -1500,6 +1547,10 @@ async def plot_usgs_feed_on_map(
     """
     if tool_context is None:
         return {"status": "error", "error": "Tool context is unavailable."}
+    try:
+        normalized_marker_scale = _normalize_dense_map_marker_scale(marker_scale)
+    except ValueError as exc:
+        return {"status": "error", "error": str(exc)}
     if feed not in ARTIFACT_NAMES:
         return {"status": "error", "error": f"Unsupported feed: {feed!r}."}
     names = _artifact_names(artifact_name)
@@ -1569,7 +1620,8 @@ async def plot_usgs_feed_on_map(
         return {"status": "empty", **provenance}
 
     screen_marker_radii_px = [
-        _dense_event_radius_px(event["magnitude"]) for event in selected
+        _dense_event_radius_px(event["magnitude"], normalized_marker_scale)
+        for event in selected
     ]
     map_events = [
         MapEvent(
@@ -1604,7 +1656,7 @@ async def plot_usgs_feed_on_map(
             "start_time": start_time,
             "end_time": end_time,
         },
-        "style": _dense_map_style(),
+        "style": _dense_map_style(normalized_marker_scale),
     }
     # The catalog artifact plus the deterministic style above is the source of
     # truth. Avoid duplicating thousands of markers in the map spec, where a
@@ -1625,6 +1677,7 @@ async def plot_usgs_feed_on_map(
                 "captioned": spec["caption"] is not None,
                 "catalog_artifact": ARTIFACT_NAMES[feed],
                 "catalog_version": selected_version,
+                "marker_scale": normalized_marker_scale,
             },
         )
         spec_version = await tool_context.save_artifact(
@@ -1658,6 +1711,7 @@ async def plot_usgs_feed_on_map(
         "map_viewport": spec["map_viewport"],
         "caption": spec["caption"],
         "legend": spec["legend"],
+        "marker_scale": normalized_marker_scale,
         "rendered_count": rendered_count,
         "skipped_count": render_skipped,
         "warnings": warnings,
@@ -1672,6 +1726,7 @@ async def plot_usgs_search_on_map(
     artifact_name: str = DEFAULT_MAP_ARTIFACT,
     crop_to_drawn_area: bool = False,
     caption: MapCaption | None = None,
+    marker_scale: float = DENSE_MAP_DEFAULT_MARKER_SCALE,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """Plot a stored USGS historical search without exposing its event array.
@@ -1685,6 +1740,8 @@ async def plot_usgs_search_on_map(
         crop_to_drawn_area: Crop to the filtered events instead of keeping the
             full-world view.
         caption: Optional title and date rendered above the map.
+        marker_scale: Relative catalog marker size from 0.6 through 1.5. Use
+            smaller values for dense maps and larger values for sparse maps.
 
     Returns:
         Compact historical-search provenance and versioned map artifact handles.
@@ -1692,6 +1749,10 @@ async def plot_usgs_search_on_map(
     """
     if tool_context is None:
         return {"status": "error", "error": "Tool context is unavailable."}
+    try:
+        normalized_marker_scale = _normalize_dense_map_marker_scale(marker_scale)
+    except ValueError as exc:
+        return {"status": "error", "error": str(exc)}
     if min_magnitude is not None and (
         isinstance(min_magnitude, bool)
         or not isinstance(min_magnitude, (int, float))
@@ -1777,7 +1838,8 @@ async def plot_usgs_search_on_map(
         return {"status": "empty", **provenance}
 
     screen_marker_radii_px = [
-        _dense_event_radius_px(event["magnitude"]) for event in selected
+        _dense_event_radius_px(event["magnitude"], normalized_marker_scale)
+        for event in selected
     ]
     map_events = [
         MapEvent(
@@ -1813,7 +1875,7 @@ async def plot_usgs_search_on_map(
             "start_time": start_time,
             "end_time": end_time,
         },
-        "style": _dense_map_style(),
+        "style": _dense_map_style(normalized_marker_scale),
     }
     spec["events"] = []
 
@@ -1832,6 +1894,7 @@ async def plot_usgs_search_on_map(
                 "catalog_artifact": SEARCH_ARTIFACT_NAME,
                 "catalog_version": selected_version,
                 "truncated": search_provenance["truncated"],
+                "marker_scale": normalized_marker_scale,
             },
         )
         spec_version = await tool_context.save_artifact(
@@ -1865,6 +1928,7 @@ async def plot_usgs_search_on_map(
         "map_viewport": spec["map_viewport"],
         "caption": spec["caption"],
         "legend": spec["legend"],
+        "marker_scale": normalized_marker_scale,
         "rendered_count": rendered_count,
         "skipped_count": render_skipped,
         "warnings": warnings,

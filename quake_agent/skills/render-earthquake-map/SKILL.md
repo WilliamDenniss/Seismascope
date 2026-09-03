@@ -20,9 +20,13 @@ This skill draws events; it does not decide which earthquakes are relevant.
   so its function call stays small even for the monthly catalog.
 - The catalog-backed renderer applies deterministic magnitude colors and
   bounded screen-space marker sizes, labels only magnitude 6+ events, and saves
-  a compact specification that references the source catalog artifact. Marker
-  size is renderer policy and does not change with basemap resolution. Use this
-  path for requests such as "all earthquakes in the last month."
+  a compact specification that references the source catalog artifact. Use
+  `marker_scale` from 0.6 through 1.5 to adjust the default magnitude sizing:
+  prefer roughly 0.6-0.8 for hundreds or thousands of events, 1.0 for ordinary
+  maps, and 1.1-1.3 for sparse maps where the events should be more prominent.
+  Base the choice on result density and the requested presentation, not the
+  selected basemap resolution. Use this path for requests such as "all
+  earthquakes in the last month."
 - For a full historical result, call `plot_usgs_search_on_map` with the exact
   artifact version from `search_usgs_events`. The map specification retains the
   Event API query provenance without serializing the event array. If the source
@@ -66,10 +70,12 @@ This skill draws events; it does not decide which earthquakes are relevant.
   `plot_usgs_feed_on_map` using the saved `event_source` catalog version
   and revised filters; its specification intentionally does not expand the
   thousands of event objects. Preserve the saved crop request, legend, and
-  caption unless the user asks to change them; the renderer recalculates
-  padding for the revised events.
+  caption unless the user asks to change them. Also preserve the saved
+  `event_source.style.radius.scale` unless the user requests a marker-size
+  change; the renderer recalculates padding for the revised events.
 - For a catalog-backed historical map, rerun `plot_usgs_search_on_map` using its
-  saved search artifact version and revised local time or magnitude filters.
+  saved search artifact version and revised local time or magnitude filters,
+  preserving the saved marker scale unless the user requests a change.
 - Report both the PNG artifact and its source-specification artifact, including
   their versions and any renderer warnings.
 

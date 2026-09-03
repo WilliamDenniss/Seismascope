@@ -227,22 +227,24 @@ def test_automatic_crop_padding_scales_with_marker_extent(
 
 
 @pytest.mark.parametrize(
-    ("magnitude", "expected_radius"),
+    ("magnitude", "marker_scale", "expected_radius"),
     [
-        (None, 5.0),
-        (-1.0, 5.0),
-        (0.0, 5.0),
-        (5.0, 12.5),
-        (6.1, 14.15),
-        (9.0, 18.0),
-        (10.0, 18.0),
+        (None, 1.0, 5.0),
+        (-1.0, 1.0, 5.0),
+        (0.0, 0.6, 3.0),
+        (5.0, 0.8, 10.0),
+        (5.0, 1.0, 12.5),
+        (6.1, 1.0, 14.15),
+        (9.0, 1.0, 18.0),
+        (10.0, 1.5, 24.0),
     ],
 )
 def test_dense_event_radius_is_bounded_screen_space(
     magnitude: float | None,
+    marker_scale: float,
     expected_radius: float,
 ) -> None:
-    assert map_tools._dense_event_radius_px(magnitude) == pytest.approx(
+    assert map_tools._dense_event_radius_px(magnitude, marker_scale) == pytest.approx(
         expected_radius
     )
 
@@ -254,6 +256,8 @@ def test_screen_marker_size_is_independent_of_basemap_scale() -> None:
         map_tools._rendered_marker_radius(item, scale) for scale in (1, 4, 8, 16)
     ] == [14.0, 14.0, 14.0, 14.0]
     assert map_tools._rendered_marker_outline_width(item, 14.0, 32768) == 3
+    assert map_tools._rendered_marker_outline_width(item, 5.0, 32768) == 2
+    assert map_tools._rendered_marker_outline_width(item, 3.0, 32768) == 1
 
 
 def test_screen_marker_renders_at_requested_size_on_sixteen_x_crop() -> None:
@@ -374,12 +378,44 @@ def test_catalog_renderer_schema_never_accepts_model_supplied_events() -> None:
     assert "events" not in schema["properties"]
     assert "legend" not in schema["properties"]
     assert "caption" in schema["properties"]
+    assert schema["properties"]["marker_scale"]["default"] == 1.0
 
     search_declaration = FunctionTool(plot_usgs_search_on_map)._get_declaration()
     search_schema = search_declaration.parameters_json_schema
     assert search_schema is not None
     assert "artifact_version" in search_schema["properties"]
     assert "events" not in search_schema["properties"]
+    assert search_schema["properties"]["marker_scale"]["default"] == 1.0
+
+    supplied_declaration = FunctionTool(plot_data_points_on_map)._get_declaration()
+    supplied_schema = supplied_declaration.parameters_json_schema
+    assert supplied_schema is not None
+    assert "marker_scale" not in supplied_schema["properties"]
+
+
+@pytest.mark.parametrize(
+    "marker_scale",
+    [True, float("nan"), float("inf"), 0.59, 1.51],
+)
+async def test_catalog_renderers_reject_invalid_marker_scale(
+    artifact_context,
+    marker_scale,
+) -> None:
+    feed_result = await plot_usgs_feed_on_map(
+        "monthly",
+        marker_scale=marker_scale,
+        tool_context=artifact_context,
+    )
+    search_result = await plot_usgs_search_on_map(
+        marker_scale=marker_scale,
+        tool_context=artifact_context,
+    )
+
+    assert feed_result == {
+        "status": "error",
+        "error": "marker_scale must be finite and between 0.6 and 1.5.",
+    }
+    assert search_result == feed_result
 
 
 async def test_historical_search_renderer_preserves_provenance_and_warning(
@@ -425,11 +461,13 @@ async def test_historical_search_renderer_preserves_provenance_and_warning(
         min_magnitude=3,
         crop_to_drawn_area=True,
         caption=MapCaption(title="Tokyo M5+", date="2021-08-31 to 2026-08-31"),
+        marker_scale=1.2,
         tool_context=artifact_context,
     )
 
     assert rendered["status"] == "ok"
     assert rendered["truncated"] is True
+    assert rendered["marker_scale"] == 1.2
     assert rendered["truncation_notice"] == notice
     assert notice in rendered["warnings"]
     spec_part = await artifact_context.load_artifact(
@@ -441,6 +479,7 @@ async def test_historical_search_renderer_preserves_provenance_and_warning(
     assert spec["event_source"]["kind"] == "usgs_historical_search_artifact"
     assert spec["event_source"]["query"] == catalog["quake_agent"]["query"]
     assert spec["event_source"]["truncation_notice"] == notice
+    assert spec["event_source"]["style"]["radius"]["scale"] == 1.2
 
 
 async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(
@@ -488,6 +527,7 @@ async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(
             title="Worldwide Earthquakes",
             date="As of August 31, 2026",
         ),
+        marker_scale=0.7,
         tool_context=artifact_context,
     )
 
@@ -496,6 +536,7 @@ async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(
     assert rendered["total_matched"] == event_count
     assert rendered["rendered_count"] == event_count
     assert rendered["skipped_count"] == 0
+    assert rendered["marker_scale"] == 0.7
 
     map_part = await artifact_context.load_artifact(
         rendered["map_artifact_name"],
@@ -530,10 +571,11 @@ async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(
         "labels": "magnitude >= 6",
         "radius": {
             "mode": "magnitude_scaled_screen_px",
-            "base_px": 5.0,
-            "pixels_per_magnitude": 1.5,
-            "minimum_px": 5.0,
-            "maximum_px": 18.0,
+            "scale": 0.7,
+            "base_px": 3.5,
+            "pixels_per_magnitude": pytest.approx(1.05),
+            "minimum_px": 3.5,
+            "maximum_px": pytest.approx(12.6),
         },
     }
 

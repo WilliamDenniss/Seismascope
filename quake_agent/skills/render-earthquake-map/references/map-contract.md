@@ -27,11 +27,14 @@ Catalog-scale maps use the same projection and marker renderer but store an
 magnitude styling instead of copying every marker into the map specification.
 This keeps both the model tool call and later specification loads bounded. The
 renderer colors magnitude bands blue, green, yellow, orange, and red; uses gray
-when magnitude is unavailable; scales a bounded 5–18 pixel circle radius by
-magnitude; and labels only magnitude 6+ events. Catalog marker radius and its
-2–4 pixel outline are screen-space styling: basemap resolution and crop-only
-enlargement do not change them, and their visual radius does not expand the
-geographic event-center extent used for framing.
+when magnitude is unavailable; scales a default 5–18 pixel circle radius by
+magnitude; and labels only magnitude 6+ events. The agent may apply a bounded
+`marker_scale` from 0.6 through 1.5, with an absolute 3–24 pixel safety range.
+The default is 1.0. Catalog marker radius and its 1–4 pixel outline are
+screen-space styling: basemap resolution and crop-only enlargement do not
+change them, and their visual radius does not expand the geographic event-center
+extent used for framing. The saved `event_source.style.radius` records the
+chosen scale and the effective sizing formula.
 
 Colors may be Pillow-compatible names, hex values, or RGBA values. Circles are
 translucent with opaque outlines. Smaller circles are drawn first so larger
