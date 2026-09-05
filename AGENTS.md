@@ -1,6 +1,6 @@
 # Project
 
-Quake Agent is a Python 3.12 Google ADK application with a FastAPI public web
+Seismascope is a Python 3.12 Google ADK application with a FastAPI public web
 interface. Agent behavior lives under `quake_agent/`, the browser application
 lives under `web/`, and automated tests live under `tests/`.
 

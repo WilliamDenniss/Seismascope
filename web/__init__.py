@@ -1,2 +1,1 @@
-"""Public web application for Quake Agent."""
-
+"""Public web application for Seismascope."""

@@ -1,5 +1,5 @@
 [project]
-name = "quakeagent"
+name = "seismascope"
 version = "0.1.0"
 description = "A stateful Google ADK agent for USGS earthquake feeds and world maps."
 license = "Apache-2.0"

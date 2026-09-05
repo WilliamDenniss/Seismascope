@@ -5,6 +5,8 @@
 .pytest_cache/
 .python-version
 .venv/
+.pnpm-store/
+node_modules/
 __pycache__/
 *.py[cod]
 tests/

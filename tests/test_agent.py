@@ -22,6 +22,10 @@ def _resolved_instruction() -> str:
     return _instruction_for_time(_TEST_NOW)
 
 
+def test_agent_identifies_as_seismascope() -> None:
+    assert "You are Seismascope," in _resolved_instruction()
+
+
 def test_agent_loads_both_filesystem_skills_and_public_tool_schemas() -> None:
     assert root_agent.name == "seismic_analyst"
     assert set(_skill_toolset._skills) == {

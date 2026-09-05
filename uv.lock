@@ -1047,7 +1047,7 @@ wheels = [
 ]
 
 [[package]]
-name = "quakeagent"
+name = "seismascope"
 version = "0.1.0"
 source = { virtual = "." }
 dependencies = [

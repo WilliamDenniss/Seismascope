@@ -97,7 +97,9 @@ async def test_search_returns_top_normalized_match_and_country_filter() -> None:
     assert request.url.params["addressdetails"] == "1"
     assert request.url.params["accept-language"] == "en"
     assert request.url.params["countrycodes"] == "jp"
-    assert request.headers["user-agent"].startswith("QuakeAgent/0.1")
+    assert request.headers["user-agent"] == (
+        "Seismascope/0.1 (+https://github.com/WilliamDenniss/quakeagent)"
+    )
 
 
 async def test_cache_normalizes_query_and_caches_no_match() -> None:

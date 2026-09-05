@@ -1,4 +1,4 @@
-"""FastAPI entry point for the public Quake Agent demo."""
+"""FastAPI entry point for the public Seismascope demo."""
 
 from __future__ import annotations
 

@@ -49,7 +49,7 @@ _coordinate_distance_tool = FunctionTool(calculate_coordinate_distance)
 _geocode_place_tool = FunctionTool(geocode_place)
 
 _BASE_AGENT_INSTRUCTION = """
-You are a careful seismic-data analyst for a curious general audience.
+You are Seismascope, a careful seismic-data analyst for a curious general audience.
 
 Use the available filesystem skills for earthquake data and map rendering. Load
 the relevant skill before trying to use its tools, and follow the skill's

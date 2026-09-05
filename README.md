@@ -1,8 +1,11 @@
-# Quake Agent
+# Seismascope
 
-A local, stateful Google ADK agent that downloads official USGS realtime feeds
+A stateful Google ADK agent that downloads official USGS realtime feeds
 and bounded historical Event API searches, stores versioned snapshots, queries
 them, and renders event overlays on `static/world_map.png`.
+
+The Python package (`quake_agent`), API app name, and `QUAKE_AGENT_*`
+configuration variables retain their existing names for compatibility.
 
 ## Run locally with the ADK development UI
 
@@ -61,9 +64,20 @@ Runtime configuration:
 Build and run the same image used for deployment:
 
 ```bash
-docker build -t quakeagent .
-docker run --rm -p 8080:8080 --env-file .env quakeagent
+docker build -t seismascope .
+docker run --rm -p 8080:8080 --env-file .env seismascope
 ```
+
+Published images are available from
+[Docker Hub](https://hub.docker.com/r/wdenniss/seismascope):
+
+```bash
+docker pull wdenniss/seismascope:latest
+docker run --rm -p 8080:8080 --env-file .env wdenniss/seismascope:latest
+```
+
+Images target `linux/amd64` for Cloud Run. Releases also carry the Git commit's
+short SHA as an image tag so deployments can select a specific version.
 
 The repository-root `Dockerfile` packages the agent, its skills, the canonical
 world map, and the web app into one image. For a first public Cloud Run demo:

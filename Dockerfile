@@ -16,11 +16,11 @@ COPY quake_agent ./quake_agent
 COPY static ./static
 COPY web ./web
 
-RUN groupadd --system quakeagent \
-    && useradd --system --gid quakeagent --home-dir /app quakeagent \
-    && chown -R quakeagent:quakeagent /app
+RUN groupadd --system seismascope \
+    && useradd --system --gid seismascope --home-dir /app seismascope \
+    && chown -R seismascope:seismascope /app
 
-USER quakeagent
+USER seismascope
 
 EXPOSE 8080
 

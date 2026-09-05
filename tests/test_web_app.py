@@ -166,9 +166,13 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert '<img class="mark" src="/favicon.svg" alt="">' in page.text
     assert favicon.status_code == 200
     assert favicon.headers["content-type"].startswith("image/svg+xml")
-    assert "Quake Agent" in favicon.text
+    assert '<title id="title">Seismascope</title>' in favicon.text
     assert "#67d4c0" in favicon.text
-    assert "Quake Agent" in page.text
+    assert "<title>Seismascope</title>" in page.text
+    assert "<h1>Seismascope</h1>" in page.text
+    assert 'aria-label="Message Seismascope"' in page.text
+    assert "Quake Agent" not in page.text
+    assert "Quake Agent" not in favicon.text
     assert "current and historical USGS earthquake data" in page.text
     assert "bounded historical searches" in page.text
     assert "Public place names may be sent to OpenStreetMap's Nominatim" in page.text

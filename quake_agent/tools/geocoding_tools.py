@@ -26,7 +26,7 @@ from .geography_tools import GeographicCoordinate
 DEFAULT_GEOCODER_BASE_URL = "https://nominatim.openstreetmap.org"
 GEOCODER_BASE_URL_ENV = "QUAKE_AGENT_GEOCODER_BASE_URL"
 GEOCODER_USER_AGENT = (
-    "QuakeAgent/0.1 (+https://github.com/WilliamDenniss/quakeagent)"
+    "Seismascope/0.1 (+https://github.com/WilliamDenniss/quakeagent)"
 )
 GEOCODER_PROVIDER = "OpenStreetMap Nominatim"
 GEOCODER_ATTRIBUTION = "Data © OpenStreetMap contributors, ODbL 1.0"
