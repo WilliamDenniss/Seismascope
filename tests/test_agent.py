@@ -23,11 +23,11 @@ def _resolved_instruction() -> str:
 
 
 def test_agent_identifies_as_seismascope() -> None:
+    assert root_agent.name == "Seismascope"
     assert "You are Seismascope," in _resolved_instruction()
 
 
 def test_agent_loads_both_filesystem_skills_and_public_tool_schemas() -> None:
-    assert root_agent.name == "seismic_analyst"
     assert set(_skill_toolset._skills) == {
         "download-earthquake-data",
         "render-earthquake-map",
@@ -124,16 +124,16 @@ def test_agent_instruction_refreshes_time_without_recreating_agent(
 
 async def test_activated_skills_expose_only_their_dynamic_tools() -> None:
     data_context = SimpleNamespace(
-        agent_name="seismic_analyst",
+        agent_name=root_agent.name,
         invocation_id="invocation-data",
         state={
-            "_adk_activated_skill_seismic_analyst": ["download-earthquake-data"]
+            f"_adk_activated_skill_{root_agent.name}": ["download-earthquake-data"]
         },
     )
     map_context = SimpleNamespace(
-        agent_name="seismic_analyst",
+        agent_name=root_agent.name,
         invocation_id="invocation-map",
-        state={"_adk_activated_skill_seismic_analyst": ["render-earthquake-map"]},
+        state={f"_adk_activated_skill_{root_agent.name}": ["render-earthquake-map"]},
     )
 
     data_tools = await _skill_toolset._resolve_additional_tools_from_state(data_context)

@@ -64,7 +64,7 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
                 payload = await request.json()
                 return [
                     {
-                        "author": "seismic_analyst",
+                        "author": "Seismascope",
                         "content": {
                             "role": "model",
                             "parts": [{"text": payload["newMessage"]["parts"][0]["text"]}],
@@ -94,7 +94,7 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
                         return
                     text = payload["newMessage"]["parts"][0]["text"]
                     partial_event = {
-                        "author": "seismic_analyst",
+                        "author": "Seismascope",
                         "partial": True,
                         "content": {
                             "role": "model",
@@ -103,7 +103,7 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
                         "actions": {"artifactDelta": {}},
                     }
                     final_event = {
-                        "author": "seismic_analyst",
+                        "author": "Seismascope",
                         "partial": False,
                         "content": {
                             "role": "model",

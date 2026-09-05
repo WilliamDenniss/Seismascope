@@ -494,6 +494,7 @@
         const renderedArtifacts = new Set();
         let config = null;
         let busy = false;
+        const agentAuthors = new Set(["Seismascope", "seismic_analyst"]);
 
         const sessionKey = "quake-agent-session-id";
         const userKey = "quake-agent-user-id";
@@ -817,7 +818,7 @@
         }
 
         function toolEventParts(event) {
-          if (event.author !== "seismic_analyst" || !Array.isArray(event.content?.parts)) {
+          if (!agentAuthors.has(event.author) || !Array.isArray(event.content?.parts)) {
             return [];
           }
           return event.content.parts;
@@ -1101,7 +1102,7 @@
         }
 
         function agentEventText(event) {
-          if (event.author !== "seismic_analyst" || !event.content?.parts) return null;
+          if (!agentAuthors.has(event.author) || !event.content?.parts) return null;
           const chunks = [];
           for (const part of event.content.parts) {
             if (typeof part.text === "string" && !part.thought) chunks.push(part.text);

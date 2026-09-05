@@ -121,7 +121,7 @@ def _agent_instruction(_: ReadonlyContext) -> str:
 
 
 root_agent = Agent(
-    name="seismic_analyst",
+    name="Seismascope",
     model=os.getenv("QUAKE_AGENT_MODEL", "gemini-flash-latest"),
     description=(
         "Downloads official USGS earthquake catalogs and creates reproducible, "
