@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 from collections import defaultdict
 from collections import deque
+import html
 import json
 import logging
 import os
@@ -13,6 +14,7 @@ from pathlib import PurePosixPath
 import re
 import time
 from typing import Any
+from urllib.parse import quote
 from urllib.parse import urlparse
 from uuid import UUID
 from uuid import uuid4
@@ -20,6 +22,7 @@ from uuid import uuid4
 from fastapi import FastAPI
 from fastapi import Request
 from fastapi.responses import FileResponse
+from fastapi.responses import HTMLResponse
 from fastapi.responses import JSONResponse
 from dotenv import load_dotenv
 from google.adk.cli.fast_api import get_fast_api_app
@@ -46,6 +49,31 @@ _ARTIFACT_PATH = re.compile(
     r"^/apps/quake_agent/users/([^/]+)/sessions/([^/]+)/artifacts/"
     r"(.+)/versions/(\d+)$"
 )
+
+_EXAMPLE_PROMPT_BANK = re.compile(
+    r'<script id="example-prompt-bank" type="application/json">\s*'
+    r"(\[.*?\])\s*</script>",
+    re.DOTALL,
+)
+
+
+def _example_prompts() -> tuple[str, ...]:
+    """Read the browser's ordered example bank for use by public endpoints."""
+    match = _EXAMPLE_PROMPT_BANK.search(INDEX_PATH.read_text(encoding="utf-8"))
+    if match is None:
+        raise RuntimeError("The example prompt bank is missing from the web page.")
+    prompts = json.loads(match.group(1))
+    if (
+        not isinstance(prompts, list)
+        or not prompts
+        or any(not isinstance(prompt, str) or not prompt for prompt in prompts)
+        or len(prompts) != len(set(prompts))
+    ):
+        raise RuntimeError("The example prompt bank must contain unique text prompts.")
+    return tuple(prompts)
+
+
+EXAMPLE_PROMPTS = _example_prompts()
 
 
 def _env_int(name: str, default: int, *, minimum: int, maximum: int) -> int:
@@ -297,6 +325,7 @@ def create_app() -> FastAPI:
         method = request.method.upper()
         public_get = path in {
             "/",
+            "/examples",
             "/favicon.svg",
             "/health",
             "/runtime-config.json",
@@ -437,13 +466,42 @@ def create_app() -> FastAPI:
         if path == "/run_sse":
             response.headers["Cache-Control"] = "no-store"
             response.headers["X-Accel-Buffering"] = "no"
-        if path in {"/", "/runtime-config.json"}:
+        if path in {"/", "/examples", "/runtime-config.json"}:
             response.headers["Cache-Control"] = "no-store"
         return response
 
     @app.get("/", include_in_schema=False)
     async def index() -> FileResponse:
         return FileResponse(INDEX_PATH, media_type="text/html")
+
+    @app.get("/examples", include_in_schema=False)
+    async def examples() -> HTMLResponse:
+        links = "\n".join(
+            f'<li><a href="/#q={quote(prompt, safe="")}">{html.escape(prompt)}</a></li>'
+            for prompt in EXAMPLE_PROMPTS
+        )
+        page = f"""<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Seismascope examples</title>
+    <style>
+      body {{ max-width: 60rem; margin: 0 auto; padding: 2rem 1.25rem;
+        color: #17202a; font: 1rem/1.5 system-ui, sans-serif; }}
+      a {{ color: #075985; }}
+      li {{ margin: .8rem 0; }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <h1>Example queries</h1>
+      <p>Choose an example to open it in Seismascope.</p>
+      <ol>{links}</ol>
+    </main>
+  </body>
+</html>"""
+        return HTMLResponse(page)
 
     @app.get("/favicon.svg", include_in_schema=False)
     async def favicon() -> FileResponse:

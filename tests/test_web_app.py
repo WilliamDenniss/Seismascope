@@ -5,6 +5,7 @@ import json
 import re
 from collections.abc import Callable
 from typing import Any
+from urllib.parse import unquote
 from uuid import uuid4
 
 from fastapi import FastAPI
@@ -262,6 +263,21 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
         "maxPromptCharacters": 2000,
         "temporarySessions": True,
     }
+
+
+async def test_examples_lists_ordered_links_to_each_example(app_factory) -> None:
+    app = app_factory()
+    async with _client(app) as client:
+        first = await client.get("/examples")
+        second = await client.get("/examples")
+
+    assert first.status_code == 200
+    assert first.headers["content-type"].startswith("text/html")
+    assert first.headers["cache-control"] == "no-store"
+    hrefs = re.findall(r'<a href="/#q=([^\"]+)">', first.text)
+    prompts = [unquote(href) for href in hrefs]
+    assert prompts == list(web_app.EXAMPLE_PROMPTS)
+    assert first.text == second.text
 
 
 async def test_valid_run_body_reaches_adk_with_body_intact(app_factory) -> None:
