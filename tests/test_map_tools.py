@@ -567,7 +567,7 @@ async def test_catalog_renderer_maps_ten_thousand_events_from_artifact(
     assert spec["caption"] == rendered["caption"]
     assert spec["event_source"]["catalog_artifact_version"] == catalog_version
     assert spec["event_source"]["style"] == {
-        "color": "magnitude_bins",
+        "color": map_tools.resolve_catalog_style(None),
         "labels": "magnitude >= 6",
         "radius": {
             "mode": "magnitude_scaled_screen_px",

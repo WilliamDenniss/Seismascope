@@ -23,6 +23,9 @@ explicitly dated periods.
    or a small selected-event map. Never put the complete monthly catalog into
    model context. When the user wants the whole feed mapped, skip the query and
    give the compact feed artifact handle to `plot_usgs_feed_on_map`.
+   The feed/search handle includes `magnitude_summary` with the valid stored
+   event count, finite magnitude range, unknown count, and a bounded histogram.
+   Use it to choose a catalog map style without requesting the event array.
 4. Preserve the artifact name and version when describing or mapping results.
 
 For a historical search:

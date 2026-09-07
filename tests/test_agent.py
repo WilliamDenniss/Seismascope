@@ -151,3 +151,11 @@ async def test_activated_skills_expose_only_their_dynamic_tools() -> None:
         "plot_data_points_on_map",
         "load_current_map_spec",
     }
+
+
+def test_agent_requires_deliberate_catalog_color_mode():
+    instruction = _resolved_instruction()
+    assert "explicitly choose and pass `style`, including `mode`" in instruction
+    assert "Choose bands or a continuous gradient" in instruction
+    assert "Neither is a universal default" in instruction
+    assert "reuse the saved color style" in instruction

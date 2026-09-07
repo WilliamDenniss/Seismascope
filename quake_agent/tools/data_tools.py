@@ -213,6 +213,36 @@ async def _fetch_usgs_bytes(
     return raw
 
 
+def _magnitude_summary(events: list[dict[str, Any]]) -> dict[str, Any]:
+    """Bounded histogram of normalized events, including an explicit unknown count."""
+    magnitudes = [event["magnitude"] for event in events if event["magnitude"] is not None]
+    edges = list(range(10))
+    counts = [0] * (len(edges) + 1)
+    for magnitude in magnitudes:
+        index = 0 if magnitude < 0 else min(10, math.floor(magnitude) + 1)
+        counts[index] += 1
+    return {
+        "event_count": len(events),
+        "known_count": len(magnitudes),
+        "unknown_count": len(events) - len(magnitudes),
+        "min_magnitude": min(magnitudes, default=None),
+        "max_magnitude": max(magnitudes, default=None),
+        "histogram": [
+            {"lower_bound": edges[i - 1] if i else None,
+             "upper_bound": edges[i] if i < len(edges) else None,
+             "count": count}
+            for i, count in enumerate(counts)
+        ],
+    }
+
+
+def _catalog_magnitude_summary(catalog: dict[str, Any]) -> dict[str, Any]:
+    events, _, _ = _select_catalog_events(
+        catalog, min_magnitude=None, bounds=None, start=None, end=None, sort="time_desc"
+    )
+    return _magnitude_summary(events)
+
+
 def _catalog_handle(
     *,
     feed: str,
@@ -232,6 +262,7 @@ def _catalog_handle(
         "artifact_name": ARTIFACT_NAMES[feed],
         "artifact_version": version,
         "event_count": len(catalog["features"]),
+        "magnitude_summary": _catalog_magnitude_summary(catalog),
         "source_generated_at": generated_at,
         "fetched_at": fetched_at,
         "bbox": catalog.get("bbox"),
@@ -459,6 +490,7 @@ def _search_catalog_handle(
         "artifact_name": SEARCH_ARTIFACT_NAME,
         "artifact_version": version,
         "event_count": len(catalog["features"]),
+        "magnitude_summary": _catalog_magnitude_summary(catalog),
         "total_matched": provenance["total_matched"],
         "stored_count": provenance["stored_count"],
         "truncated": provenance["truncated"],
@@ -494,6 +526,7 @@ def _empty_search_result(
         "query": query,
         "total_matched": 0,
         "stored_count": 0,
+        "magnitude_summary": _magnitude_summary([]),
         "truncated": False,
         "fetched_at": fetched_at,
         "cached": cached,
@@ -964,6 +997,7 @@ async def query_usgs_feed(
         "source_generated_at": _epoch_ms_to_utc(metadata.get("generated")),
         "total_catalog_events": len(catalog["features"]),
         "total_matched": len(filtered),
+        "magnitude_summary": _magnitude_summary(filtered),
         "returned_count": len(returned),
         "skipped_invalid": skipped,
         "deduplicated_count": duplicates,
@@ -1078,6 +1112,7 @@ async def query_usgs_search(
         "truncated": provenance["truncated"],
         "total_catalog_events": len(catalog["features"]),
         "total_matched": len(filtered),
+        "magnitude_summary": _magnitude_summary(filtered),
         "returned_count": len(returned),
         "skipped_invalid": skipped,
         "deduplicated_count": duplicates,

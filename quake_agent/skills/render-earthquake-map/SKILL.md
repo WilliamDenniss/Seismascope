@@ -18,7 +18,7 @@ This skill draws events; it does not decide which earthquakes are relevant.
   `download_usgs_feed`. Do not query, copy, or serialize the event array. This
   artifact-backed path loads and renders every matching event inside the tool,
   so its function call stays small even for the monthly catalog.
-- The catalog-backed renderer applies deterministic magnitude colors and
+- The catalog-backed renderer applies an agent-controlled magnitude color scale and
   bounded screen-space marker sizes, labels only magnitude 6+ events, and saves
   a compact specification that references the source catalog artifact. Use
   `marker_scale` from 0.6 through 1.5 to adjust the default magnitude sizing:
@@ -27,6 +27,18 @@ This skill draws events; it does not decide which earthquakes are relevant.
   Base the choice on result density and the requested presentation, not the
   selected basemap resolution. Use this path for requests such as "all
   earthquakes in the last month."
+- Choose catalog `style` deliberately using the source handle's compact
+  `magnitude_summary` (range, unknown count, and histogram). The default is a
+  sequential heat gradient spanning M0-M9, so colors keep changing above M4.
+  Use `palette` (`heat`, `viridis`, or `blue`) and `min_magnitude` /
+  `max_magnitude` to focus the gradient on the relevant range, or supply ordered
+  `color_stops` for a custom progression. Use `mode="bands"` with ordered
+  `bands` only when discrete thresholds help answer the request. Read the map
+  contract for examples. Catalog legends are generated automatically; never
+  invent a separate legend for them. Endpoint colors clamp outside a gradient's
+  range, and unknown magnitudes have a separate swatch.
+- Inspect the returned PNG when image inspection is available. Revise the
+  palette or range if contrast is weak or meaningful variation is lost.
 - For a full historical result, call `plot_usgs_search_on_map` with the exact
   artifact version from `search_usgs_events`. The map specification retains the
   Event API query provenance without serializing the event array. If the source
@@ -71,11 +83,17 @@ This skill draws events; it does not decide which earthquakes are relevant.
   and revised filters; its specification intentionally does not expand the
   thousands of event objects. Preserve the saved crop request, legend, and
   caption unless the user asks to change them. Also preserve the saved
-  `event_source.style.radius.scale` unless the user requests a marker-size
+  `event_source.style.radius.scale` and pass the complete saved
+  `event_source.style.color` as `style` unless the user requests a color or marker-size
   change; the renderer recalculates padding for the revised events.
 - For a catalog-backed historical map, rerun `plot_usgs_search_on_map` using its
   saved search artifact version and revised local time or magnitude filters,
-  preserving the saved marker scale unless the user requests a change.
+  preserving the saved marker scale and color style unless the user requests
+  a change. Share the same resolved color style across comparison maps; do not
+  independently rescale each dataset. Legacy specs with `color="magnitude_bins"`
+  use bands ending at 1, 2, 3, 4, and null, with colors #3b82f6, #22c55e,
+  #eab308, #f97316, and #dc2626, and unknown #6b7280; explicitly supply these
+  bands when retaining an old map's encoding.
 - Report both the PNG artifact and its source-specification artifact, including
   their versions and any renderer warnings.
 

@@ -23,10 +23,10 @@ Each event has this shape:
 ```
 
 Catalog-scale maps use the same projection and marker renderer but store an
-`event_source` reference to the exact USGS catalog artifact and deterministic
+`event_source` reference to the exact USGS catalog artifact and resolved
 magnitude styling instead of copying every marker into the map specification.
 This keeps both the model tool call and later specification loads bounded. The
-renderer colors magnitude bands blue, green, yellow, orange, and red; uses gray
+renderer defaults to a continuous heat gradient from M0 through M9; uses gray
 when magnitude is unavailable; scales a default 5–18 pixel circle radius by
 magnitude; and labels only magnitude 6+ events. The agent may apply a bounded
 `marker_scale` from 0.6 through 1.5, with an absolute 3–24 pixel safety range.
@@ -35,6 +35,54 @@ screen-space styling: basemap resolution and crop-only enlargement do not
 change them, and their visual radius does not expand the geographic event-center
 extent used for framing. The saved `event_source.style.radius` records the
 chosen scale and the effective sizing formula.
+
+Both catalog tools accept an optional `style` for colors. Examples:
+
+```json
+{"palette": "heat", "min_magnitude": 4, "max_magnitude": 9}
+```
+
+```json
+{"color_stops": [{"magnitude": 4, "color": "#ffffb2"}, {"magnitude": 6, "color": "#fd8d3c"}, {"magnitude": 9, "color": "#bd0026"}]}
+```
+
+```json
+{"mode": "bands", "bands": [{"upper_bound": 4, "color": "#ffffb2"}, {"upper_bound": 6, "color": "#fd8d3c"}, {"upper_bound": null, "color": "#bd0026"}]}
+```
+
+Curated palettes are `heat`, `viridis`, and `blue`. Continuous scales interpolate
+RGB channels between 2-12 strictly increasing finite magnitude stops. A palette
+uses an explicit range (default 0-9); custom stops define their own range, and
+any supplied range must match their endpoints. Do not mix palettes and stops.
+`out_of_range` is `clamp`: values below/above the scale use its endpoint colors.
+The color bar marks its endpoints with <= and >= to disclose this behavior.
+Bands use 2-12 strictly increasing exclusive upper bounds; only the final bound
+is null. The first band extends down without limit and the final band extends
+up without limit. An earthquake exactly on a threshold belongs to the next band.
+Labels describing these intervals and matching swatches are generated from the
+bands, so there are no uncovered values or overlapping intervals.
+
+`unknown_color` defaults to #6b7280 and is always shown separately. Catalog
+style colors must be opaque Pillow-compatible color strings; the renderer adds
+its existing marker translucency. Invalid colors, nonfinite or unordered stops,
+conflicting settings, and unsupported fields fail before artifacts are saved.
+Marker sizing, opacity, label thresholds, and highlighting are outside this
+first color-style interface.
+
+The compact `magnitude_summary` in feed/search handles covers valid, deduplicated
+stored events; filtered queries and renderer results summarize the complete
+matching selection before any listing limit. Its fixed histogram intervals are
+lower-inclusive and upper-exclusive; null endpoints extend without limit.
+For truncated historical searches, it describes only the stored subset.
+
+The saved `event_source.style.color` and returned `style` contain explicit
+normalized stops or band thresholds, colors, range, unknown color, and clamping
+policy. Pass that object as `style` on a revision or comparison, preserving
+`event_source.style.radius.scale` separately as `marker_scale`. A continuous
+legend saves the same object in `legend.scale`; bands save generated ordered
+items. A revision may move the legend corner while retaining its semantics.
+Catalog color bars and swatches use the same collision-aware panel placement
+and fit checks as explicit legends. They do not change the map viewport.
 
 Colors may be Pillow-compatible names, hex values, or RGBA values. Circles are
 translucent with opaque outlines. Smaller circles are drawn first so larger

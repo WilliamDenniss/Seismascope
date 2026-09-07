@@ -31,6 +31,11 @@ from .data_tools import _parse_utc
 from .data_tools import _search_provenance
 from .data_tools import _select_catalog_events
 from .data_tools import _state_prefix
+from .data_tools import _magnitude_summary
+from .map_styles import CatalogMapStyle
+from .map_styles import band_legend_items
+from .map_styles import magnitude_color
+from .map_styles import resolve_catalog_style
 
 
 WEB_MERCATOR_MAX_LAT = 85.05112878
@@ -278,17 +283,7 @@ def _marker_colors(
 
 
 def _dense_event_color(magnitude: float | None) -> str:
-    if magnitude is None:
-        return "#6b7280"
-    if magnitude < 1:
-        return "#3b82f6"
-    if magnitude < 2:
-        return "#22c55e"
-    if magnitude < 3:
-        return "#eab308"
-    if magnitude < 4:
-        return "#f97316"
-    return "#dc2626"
+    return magnitude_color(magnitude, resolve_catalog_style(None))
 
 
 def _normalize_dense_map_marker_scale(marker_scale: float) -> float:
@@ -333,10 +328,11 @@ def _dense_event_radius_px(
 
 def _dense_map_style(
     marker_scale: float = DENSE_MAP_DEFAULT_MARKER_SCALE,
+    color_style: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     marker_scale = _normalize_dense_map_marker_scale(marker_scale)
     return {
-        "color": "magnitude_bins",
+        "color": color_style if color_style is not None else resolve_catalog_style(None),
         "radius": {
             "mode": "magnitude_scaled_screen_px",
             "scale": marker_scale,
@@ -1009,9 +1005,20 @@ def _render_legend(
         title_size = (title_box[2] - title_box[0], title_box[3] - title_box[1])
         title_top = title_box[1]
 
+    scale = prepared_legend.get("scale")
+    gradient_height = 0
+    gradient_width = 0
+    tick_labels = []
+    if scale is not None:
+        low, high = scale["min_magnitude"], scale["max_magnitude"]
+        tick_labels = [f"<= {low:g}", f"{low + (high - low) / 2:g}", f">= {high:g}"]
+        tick_width = max(measure.textlength(label, font=font) for label in tick_labels)
+        gradient_width = max(font_size * 10, math.ceil(tick_width * 3 + column_gap * 4))
+        gradient_height = swatch_size + font_size + row_gap + section_gap
+
     item_layout: list[dict[str, Any]] = []
-    content_width = title_size[0]
-    content_height = title_size[1]
+    content_width = max(title_size[0], gradient_width)
+    content_height = title_size[1] + gradient_height
     if title is not None:
         content_height += section_gap
     for index, item in enumerate(prepared_legend["items"]):
@@ -1084,6 +1091,21 @@ def _render_legend(
             fill=(20, 20, 20, 255),
         )
         y += title_size[1] + section_gap
+    if scale is not None:
+        for offset in range(gradient_width):
+            magnitude = low + (high - low) * offset / (gradient_width - 1)
+            draw.line((x + offset, y, x + offset, y + swatch_size),
+                      fill=_parse_color(magnitude_color(magnitude, scale)))
+        draw.rectangle((x, y, x + gradient_width - 1, y + swatch_size),
+                       outline=(20, 20, 20, 255))
+        tick_y = y + swatch_size + row_gap
+        for index, label in enumerate(tick_labels):
+            text_box = measure.textbbox((0, 0), label, font=font)
+            text_width = measure.textlength(label, font=font)
+            tick_x = x + (gradient_width - text_width) * index / 2
+            draw.text((tick_x, tick_y - text_box[1]), label, font=font,
+                      fill=(20, 20, 20, 255))
+        y += gradient_height
     swatch_outline_width = max(2, round(font_size / 10))
     for index, item in enumerate(item_layout):
         if index:
@@ -1115,6 +1137,8 @@ def _render_legend(
         ],
         "corner": corner,
     }
+    if scale is not None:
+        spec.update(mode="continuous", scale=scale)
     return composited, spec
 
 
@@ -1187,6 +1211,7 @@ def _render_map(
     legend: MapLegend | None = None,
     caption: MapCaption | None = None,
     screen_marker_radii_px: list[float] | None = None,
+    catalog_style: dict[str, Any] | None = None,
 ) -> tuple[bytes, dict[str, Any], list[str], int]:
     if screen_marker_radii_px is not None:
         if len(screen_marker_radii_px) != len(events):
@@ -1196,7 +1221,14 @@ def _render_map(
             for radius in screen_marker_radii_px
         ):
             raise ValueError("Screen marker radii must be finite and positive.")
+    if catalog_style is not None:
+        items = (band_legend_items(catalog_style)
+                 if catalog_style["mode"] == "bands" else [])
+        items.append({"label": "Unknown", "color": catalog_style["unknown_color"]})
+        legend = MapLegend(title="Magnitude", items=[MapLegendItem(**item) for item in items])
     prepared_legend = _prepare_legend(legend)
+    if catalog_style is not None and catalog_style["mode"] == "continuous":
+        prepared_legend["scale"] = catalog_style
     prepared_caption = _prepare_caption(caption)
     standard_source = MAP_SOURCES[0]
     standard_size = standard_source.size
@@ -1522,6 +1554,7 @@ async def plot_usgs_feed_on_map(
     crop_to_drawn_area: bool = False,
     caption: MapCaption | None = None,
     marker_scale: float = DENSE_MAP_DEFAULT_MARKER_SCALE,
+    style: CatalogMapStyle | None = None,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """Plot a stored USGS catalog without putting its events in model context.
@@ -1540,6 +1573,9 @@ async def plot_usgs_feed_on_map(
         caption: Optional title and date rendered above the map.
         marker_scale: Relative catalog marker size from 0.6 through 1.5. Use
             smaller values for dense maps and larger values for sparse maps.
+        style: Optional continuous palette/range/color_stops or custom magnitude
+            bands. Defaults to a heat gradient spanning M0-M9; endpoint colors
+            clamp outside the range. Reuse event_source.style.color on revisions.
 
     Returns:
         Compact catalog provenance and versioned map artifact handles. Event
@@ -1549,6 +1585,7 @@ async def plot_usgs_feed_on_map(
         return {"status": "error", "error": "Tool context is unavailable."}
     try:
         normalized_marker_scale = _normalize_dense_map_marker_scale(marker_scale)
+        resolved_style = resolve_catalog_style(style)
     except ValueError as exc:
         return {"status": "error", "error": str(exc)}
     if feed not in ARTIFACT_NAMES:
@@ -1613,6 +1650,7 @@ async def plot_usgs_feed_on_map(
         "source_generated_at": _epoch_ms_to_utc(metadata.get("generated")),
         "total_catalog_events": len(catalog["features"]),
         "total_matched": len(selected),
+        "magnitude_summary": _magnitude_summary(selected),
         "skipped_invalid": skipped_invalid,
         "deduplicated_count": duplicates,
     }
@@ -1630,7 +1668,7 @@ async def plot_usgs_feed_on_map(
             # Catalog markers use the private screen-space radii above. This
             # positive placeholder satisfies the declarative event contract.
             latitude_radius=0.1,
-            color=_dense_event_color(event["magnitude"]),
+            color=magnitude_color(event["magnitude"], resolved_style),
         )
         for event in selected
     ]
@@ -1638,7 +1676,7 @@ async def plot_usgs_feed_on_map(
         image_bytes, spec, warnings, render_skipped = _render_map(
             map_events,
             crop_to_drawn_area=crop_to_drawn_area,
-            legend=DENSE_MAP_MAGNITUDE_LEGEND,
+            catalog_style=resolved_style,
             caption=caption,
             screen_marker_radii_px=screen_marker_radii_px,
         )
@@ -1656,7 +1694,7 @@ async def plot_usgs_feed_on_map(
             "start_time": start_time,
             "end_time": end_time,
         },
-        "style": _dense_map_style(normalized_marker_scale),
+        "style": _dense_map_style(normalized_marker_scale, resolved_style),
     }
     # The catalog artifact plus the deterministic style above is the source of
     # truth. Avoid duplicating thousands of markers in the map spec, where a
@@ -1712,6 +1750,7 @@ async def plot_usgs_feed_on_map(
         "caption": spec["caption"],
         "legend": spec["legend"],
         "marker_scale": normalized_marker_scale,
+        "style": resolved_style,
         "rendered_count": rendered_count,
         "skipped_count": render_skipped,
         "warnings": warnings,
@@ -1727,6 +1766,7 @@ async def plot_usgs_search_on_map(
     crop_to_drawn_area: bool = False,
     caption: MapCaption | None = None,
     marker_scale: float = DENSE_MAP_DEFAULT_MARKER_SCALE,
+    style: CatalogMapStyle | None = None,
     tool_context: ToolContext | None = None,
 ) -> dict[str, Any]:
     """Plot a stored USGS historical search without exposing its event array.
@@ -1742,6 +1782,9 @@ async def plot_usgs_search_on_map(
         caption: Optional title and date rendered above the map.
         marker_scale: Relative catalog marker size from 0.6 through 1.5. Use
             smaller values for dense maps and larger values for sparse maps.
+        style: Optional continuous palette/range/color_stops or custom magnitude
+            bands. Defaults to a heat gradient spanning M0-M9; endpoint colors
+            clamp outside the range. Reuse event_source.style.color on revisions.
 
     Returns:
         Compact historical-search provenance and versioned map artifact handles.
@@ -1751,6 +1794,7 @@ async def plot_usgs_search_on_map(
         return {"status": "error", "error": "Tool context is unavailable."}
     try:
         normalized_marker_scale = _normalize_dense_map_marker_scale(marker_scale)
+        resolved_style = resolve_catalog_style(style)
     except ValueError as exc:
         return {"status": "error", "error": str(exc)}
     if min_magnitude is not None and (
@@ -1828,6 +1872,7 @@ async def plot_usgs_search_on_map(
         "truncated": search_provenance["truncated"],
         "total_catalog_events": len(catalog["features"]),
         "total_matched": len(selected),
+        "magnitude_summary": _magnitude_summary(selected),
         "skipped_invalid": skipped_invalid,
         "deduplicated_count": duplicates,
     }
@@ -1848,7 +1893,7 @@ async def plot_usgs_search_on_map(
             # Catalog markers use the private screen-space radii above. This
             # positive placeholder satisfies the declarative event contract.
             latitude_radius=0.1,
-            color=_dense_event_color(event["magnitude"]),
+            color=magnitude_color(event["magnitude"], resolved_style),
         )
         for event in selected
     ]
@@ -1856,7 +1901,7 @@ async def plot_usgs_search_on_map(
         image_bytes, spec, warnings, render_skipped = _render_map(
             map_events,
             crop_to_drawn_area=crop_to_drawn_area,
-            legend=DENSE_MAP_MAGNITUDE_LEGEND,
+            catalog_style=resolved_style,
             caption=caption,
             screen_marker_radii_px=screen_marker_radii_px,
         )
@@ -1875,7 +1920,7 @@ async def plot_usgs_search_on_map(
             "start_time": start_time,
             "end_time": end_time,
         },
-        "style": _dense_map_style(normalized_marker_scale),
+        "style": _dense_map_style(normalized_marker_scale, resolved_style),
     }
     spec["events"] = []
 
@@ -1929,6 +1974,7 @@ async def plot_usgs_search_on_map(
         "caption": spec["caption"],
         "legend": spec["legend"],
         "marker_scale": normalized_marker_scale,
+        "style": resolved_style,
         "rendered_count": rendered_count,
         "skipped_count": render_skipped,
         "warnings": warnings,
