@@ -36,14 +36,18 @@ change them, and their visual radius does not expand the geographic event-center
 extent used for framing. The saved `event_source.style.radius` records the
 chosen scale and the effective sizing formula.
 
-Both catalog tools accept an optional `style` for colors. Examples:
+Both catalog tools accept `style` for colors. It is optional for API backward
+compatibility, but the agent must explicitly choose and pass a mode for new maps.
+Bands support distinguishable magnitude groups; continuous scales support fine
+ordered variation. Choose using the question and magnitude summary. The fallback
+gradient is not an agent design recommendation. Examples:
 
 ```json
-{"palette": "heat", "min_magnitude": 4, "max_magnitude": 9}
+{"mode": "continuous", "palette": "heat", "min_magnitude": 4, "max_magnitude": 9}
 ```
 
 ```json
-{"color_stops": [{"magnitude": 4, "color": "#ffffb2"}, {"magnitude": 6, "color": "#fd8d3c"}, {"magnitude": 9, "color": "#bd0026"}]}
+{"mode": "continuous", "color_stops": [{"magnitude": 4, "color": "#ffffb2"}, {"magnitude": 6, "color": "#fd8d3c"}, {"magnitude": 9, "color": "#bd0026"}]}
 ```
 
 ```json

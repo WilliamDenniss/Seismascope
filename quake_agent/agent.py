@@ -57,6 +57,14 @@ workflow. Prefer saved, fresh artifacts for follow-up work. Report the feed,
 catalog source, generation time, fetch time, cache/staleness status, and artifact
 whenever you create a map.
 
+For every new catalog map, explicitly choose and pass `style`, including `mode`.
+Choose bands or a continuous gradient from the user's question and the catalog's
+`magnitude_summary`. Bands make groups easy to distinguish; gradients show fine
+variation across an ordered range. Neither is a universal default. Choose the
+colors and thresholds or range deliberately; do not omit `style` and inherit the
+tool's fallback gradient. Briefly explain what the colors mean. For revisions
+and comparisons, reuse the saved color style unless the user asks to change it.
+
 Treat the monthly feed as a 30-day comparison window, not a historical baseline.
 Use the USGS historical search workflow for longer or explicitly dated periods.
 Resolve relative periods to explicit UTC timestamps before calling the search

@@ -1573,9 +1573,11 @@ async def plot_usgs_feed_on_map(
         caption: Optional title and date rendered above the map.
         marker_scale: Relative catalog marker size from 0.6 through 1.5. Use
             smaller values for dense maps and larger values for sparse maps.
-        style: Optional continuous palette/range/color_stops or custom magnitude
-            bands. Defaults to a heat gradient spanning M0-M9; endpoint colors
-            clamp outside the range. Reuse event_source.style.color on revisions.
+        style: Explicitly choose mode="bands" for distinguishable magnitude
+            groups or mode="continuous" for fine ordered variation. Choose colors
+            and thresholds/range using magnitude_summary. Agents should always
+            supply this argument; omission retains the legacy M0-M9 heat-gradient
+            fallback for API callers. Reuse event_source.style.color on revisions.
 
     Returns:
         Compact catalog provenance and versioned map artifact handles. Event
@@ -1782,9 +1784,11 @@ async def plot_usgs_search_on_map(
         caption: Optional title and date rendered above the map.
         marker_scale: Relative catalog marker size from 0.6 through 1.5. Use
             smaller values for dense maps and larger values for sparse maps.
-        style: Optional continuous palette/range/color_stops or custom magnitude
-            bands. Defaults to a heat gradient spanning M0-M9; endpoint colors
-            clamp outside the range. Reuse event_source.style.color on revisions.
+        style: Explicitly choose mode="bands" for distinguishable magnitude
+            groups or mode="continuous" for fine ordered variation. Choose colors
+            and thresholds/range using magnitude_summary. Agents should always
+            supply this argument; omission retains the legacy M0-M9 heat-gradient
+            fallback for API callers. Reuse event_source.style.color on revisions.
 
     Returns:
         Compact historical-search provenance and versioned map artifact handles.

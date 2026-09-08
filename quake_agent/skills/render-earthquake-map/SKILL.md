@@ -27,16 +27,26 @@ This skill draws events; it does not decide which earthquakes are relevant.
   Base the choice on result density and the requested presentation, not the
   selected basemap resolution. Use this path for requests such as "all
   earthquakes in the last month."
-- Choose catalog `style` deliberately using the source handle's compact
-  `magnitude_summary` (range, unknown count, and histogram). The default is a
-  sequential heat gradient spanning M0-M9, so colors keep changing above M4.
-  Use `palette` (`heat`, `viridis`, or `blue`) and `min_magnitude` /
-  `max_magnitude` to focus the gradient on the relevant range, or supply ordered
-  `color_stops` for a custom progression. Use `mode="bands"` with ordered
-  `bands` only when discrete thresholds help answer the request. Read the map
-  contract for examples. Catalog legends are generated automatically; never
-  invent a separate legend for them. Endpoint colors clamp outside a gradient's
-  range, and unknown magnitudes have a separate swatch.
+- Always pass an explicit catalog `style` with `mode` for a new map. Decide
+  between `bands` and `continuous` using the user's question and the source
+  handle's `magnitude_summary` (range, unknown count, and histogram). Neither
+  mode is a universal default; do not use the tool's fallback as a design choice.
+- Choose `mode="bands"` when a few distinct magnitude groups make the map easier
+  to read: a broad overview, a dense catalog with many similar events, or a
+  request to distinguish larger earthquakes. Choose useful thresholds from the
+  actual distribution and use distinct, ordered colors. Keep larger events
+  distinguishable above M4 when the data span several larger magnitudes; do not
+  collapse them all into one M4+ category.
+- Choose `mode="continuous"` when fine magnitude differences or a smooth ordered
+  progression are useful. Set a deliberate range with `min_magnitude` and
+  `max_magnitude`, and choose `palette` (`heat`, `viridis`, or `blue`); alternatively
+  supply ordered `color_stops`. A narrow dataset may benefit from a focused
+  range rather than M0-M9. Endpoint colors clamp outside that range.
+- Honor an explicit user preference for bands, gradients, or specific colors.
+  Do not alternate modes randomly to create variety. Briefly explain the chosen
+  color encoding, without presenting magnitude colors as hazard categories.
+  Read the map contract for examples. Catalog legends are generated
+  automatically; unknown magnitudes have a separate swatch.
 - Inspect the returned PNG when image inspection is available. Revise the
   palette or range if contrast is weak or meaningful variation is lost.
 - For a full historical result, call `plot_usgs_search_on_map` with the exact
