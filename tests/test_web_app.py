@@ -48,6 +48,7 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
             "QUAKE_AGENT_RATE_WINDOW_SECONDS",
             "SESSION_SERVICE_URI",
             "MEMORY_SERVICE_URI",
+            "ARTIFACT_SERVICE_URI",
         ):
             monkeypatch.delenv(name, raising=False)
         for name, value in environment.items():
@@ -59,6 +60,12 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
         expected_memory_uri = (
             environment.get("MEMORY_SERVICE_URI", "").strip() or "memory://"
         )
+        raw_artifact_uri = environment.get("ARTIFACT_SERVICE_URI", "").strip()
+        expected_artifact_uri = (
+            raw_artifact_uri.rstrip("/")
+            if raw_artifact_uri.startswith("gs://")
+            else (raw_artifact_uri or "memory://")
+        )
 
         def fake_adk_app(**options: Any) -> FastAPI:
             assert options["agents_dir"].endswith("/quake_agent")
@@ -66,7 +73,7 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
             assert options["auto_create_session"] is True
             assert options["session_service_uri"] == expected_session_uri
             assert options["memory_service_uri"] == expected_memory_uri
-            assert options["artifact_service_uri"] == "memory://"
+            assert options["artifact_service_uri"] == expected_artifact_uri
             app = FastAPI()
 
             @app.get("/health")
@@ -591,3 +598,54 @@ def test_agentengine_memory_service_uri_instantiates_vertex_memory_bank() -> Non
     assert service._project == "test-project"
     assert service._location == "us-central1"
     assert service._agent_engine_id == "12345"
+
+
+async def test_artifact_service_uri_configures_adk(app_factory) -> None:
+    app = app_factory(ARTIFACT_SERVICE_URI="gs://test-earthquake-artifacts/")
+    async with _client(app) as client:
+        config = await client.get("/runtime-config.json")
+
+    assert config.status_code == 200
+
+
+@pytest.mark.parametrize(
+    "uri",
+    [
+        "gs://",
+        "gs://test-bucket/subpath",
+        "gs://test-bucket?project=example",
+        "gs://user@test-bucket",
+    ],
+)
+def test_rejects_invalid_gcs_artifact_service_uri(
+    monkeypatch, uri: str
+) -> None:
+    monkeypatch.setenv("ARTIFACT_SERVICE_URI", uri)
+    with pytest.raises(RuntimeError, match="ARTIFACT_SERVICE_URI"):
+        web_app.create_app()
+
+
+def test_gcs_artifact_service_uri_instantiates_gcs_artifact_service(
+    monkeypatch,
+) -> None:
+    from unittest.mock import MagicMock
+
+    from google.adk.artifacts.gcs_artifact_service import GcsArtifactService
+    from google.adk.cli.utils.service_factory import (
+        create_artifact_service_from_options,
+    )
+    import google.cloud.storage
+
+    mock_client = MagicMock()
+    monkeypatch.setattr(google.cloud.storage, "Client", lambda **_: mock_client)
+
+    service = create_artifact_service_from_options(
+        base_dir=web_app.AGENT_DIR,
+        artifact_service_uri="gs://test-earthquake-artifacts",
+        strict_uri=True,
+        use_local_storage=False,
+    )
+
+    assert isinstance(service, GcsArtifactService)
+    assert service.bucket_name == "test-earthquake-artifacts"
+    mock_client.bucket.assert_called_once_with("test-earthquake-artifacts")

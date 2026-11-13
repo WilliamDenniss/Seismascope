@@ -121,6 +121,29 @@ def _memory_service_uri() -> str:
     return os.getenv("MEMORY_SERVICE_URI", "").strip() or "memory://"
 
 
+def _artifact_service_uri() -> str:
+    value = os.getenv("ARTIFACT_SERVICE_URI", "").strip()
+    if not value:
+        return "memory://"
+    parsed = urlparse(value)
+    if parsed.scheme == "gs":
+        if (
+            not parsed.netloc
+            or parsed.username
+            or parsed.password
+            or parsed.path not in {"", "/"}
+            or parsed.params
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise RuntimeError(
+                "ARTIFACT_SERVICE_URI with scheme gs:// must specify only a "
+                "bucket name (for example, gs://my-bucket)."
+            )
+        return f"gs://{parsed.netloc}"
+    return value
+
+
 def _is_uuid(value: Any) -> bool:
     if not isinstance(value, str):
         return False
@@ -318,13 +341,14 @@ def create_app() -> FastAPI:
     active_sessions = ActiveSessions()
     session_service_uri = _session_service_uri()
     memory_service_uri = _memory_service_uri()
+    artifact_service_uri = _artifact_service_uri()
     temporary_sessions = session_service_uri == "memory://"
 
     app = get_fast_api_app(
         agents_dir=str(AGENT_DIR),
         session_service_uri=session_service_uri,
         memory_service_uri=memory_service_uri,
-        artifact_service_uri="memory://",
+        artifact_service_uri=artifact_service_uri,
         use_local_storage=False,
         allow_origins=_allowed_origins(),
         web=False,

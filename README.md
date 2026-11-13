@@ -41,9 +41,10 @@ cp .env.example .env
 python3 -m uv run python -m web.app
 ```
 
-Open `http://localhost:8080`. Sessions and artifacts are intentionally kept in
-memory for this public-demo configuration and can reset when the process is
-restarted.
+Open `http://localhost:8080`. By default, sessions, memory, and artifacts are
+kept in memory for local/demo runs and reset when the process restarts; set
+`SESSION_SERVICE_URI`, `MEMORY_SERVICE_URI`, and `ARTIFACT_SERVICE_URI` to
+persist them externally.
 
 Runtime configuration:
 
@@ -64,6 +65,9 @@ Runtime configuration:
   The browser keeps a persistent `userId` UUID in `localStorage` (falling back
   to `sessionStorage` if blocked) so memories carry across conversations and
   visits, while `sessionId` remains per-tab in `sessionStorage`.
+- `ARTIFACT_SERVICE_URI`: Optional ADK artifact backend URI (for example,
+  `gs://YOUR_BUCKET` for Google Cloud Storage so cached USGS catalogs and
+  rendered maps persist across restarts and replicas). Defaults to `memory://`.
 - `GOOGLE_API_KEY` and `QUAKE_AGENT_MODEL`: Server-side Gemini credentials and
   model selection.
 
