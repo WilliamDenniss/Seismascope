@@ -56,6 +56,9 @@ Runtime configuration:
   per-IP prompt limit. Defaults to 30 prompts per 600 seconds.
 - `QUAKE_AGENT_GEOCODER_BASE_URL`: HTTPS base URL for the Nominatim-compatible
   forward geocoder. Defaults to the public OpenStreetMap Nominatim service.
+- `SESSION_SERVICE_URI`: Optional ADK session backend URI (for example,
+  `agentengine://projects/PROJECT/locations/REGION/reasoningEngines/ENGINE_ID`).
+  Defaults to `memory://`.
 - `GOOGLE_API_KEY` and `QUAKE_AGENT_MODEL`: Server-side Gemini credentials and
   model selection.
 

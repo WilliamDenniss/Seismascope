@@ -113,14 +113,18 @@ def _allowed_origins() -> list[str] | None:
     return origins or None
 
 
+def _session_service_uri() -> str:
+    return os.getenv("SESSION_SERVICE_URI", "").strip() or "memory://"
+
+
 def _is_uuid(value: Any) -> bool:
     if not isinstance(value, str):
         return False
     try:
-        UUID(value)
+        parsed = UUID(value)
     except (ValueError, AttributeError):
         return False
-    return True
+    return str(parsed) == value
 
 
 def _client_ip(request: Request) -> str:
@@ -308,10 +312,12 @@ def create_app() -> FastAPI:
     )
     limiter = WindowRateLimiter(rate_limit, rate_window)
     active_sessions = ActiveSessions()
+    session_service_uri = _session_service_uri()
+    temporary_sessions = session_service_uri == "memory://"
 
     app = get_fast_api_app(
         agents_dir=str(AGENT_DIR),
-        session_service_uri="memory://",
+        session_service_uri=session_service_uri,
         artifact_service_uri="memory://",
         use_local_storage=False,
         allow_origins=_allowed_origins(),
@@ -514,7 +520,7 @@ def create_app() -> FastAPI:
                 "apiBaseUrl": api_base_url,
                 "appName": APP_NAME,
                 "maxPromptCharacters": MAX_PROMPT_CHARACTERS,
-                "temporarySessions": True,
+                "temporarySessions": temporary_sessions,
             }
         )
 

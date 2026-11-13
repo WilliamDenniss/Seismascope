@@ -46,12 +46,22 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
             "QUAKE_AGENT_ALLOWED_ORIGINS",
             "QUAKE_AGENT_RATE_LIMIT",
             "QUAKE_AGENT_RATE_WINDOW_SECONDS",
+            "SESSION_SERVICE_URI",
         ):
             monkeypatch.delenv(name, raising=False)
         for name, value in environment.items():
             monkeypatch.setenv(name, value)
 
-        def fake_adk_app(**_: Any) -> FastAPI:
+        expected_session_uri = (
+            environment.get("SESSION_SERVICE_URI", "").strip() or "memory://"
+        )
+
+        def fake_adk_app(**options: Any) -> FastAPI:
+            assert options["agents_dir"].endswith("/quake_agent")
+            assert options["web"] is False
+            assert options["auto_create_session"] is True
+            assert options["session_service_uri"] == expected_session_uri
+            assert options["artifact_service_uri"] == "memory://"
             app = FastAPI()
 
             @app.get("/health")
@@ -376,6 +386,7 @@ async def test_unhandled_run_error_returns_safe_json_500(app_factory) -> None:
     [
         ({"appName": "other"}, "appName"),
         ({"userId": "not-a-uuid"}, "UUID"),
+        ({"sessionId": str(uuid4()).upper()}, "UUID"),
         ({"streaming": True}, "/run_sse"),
         ({"streaming": "yes"}, "boolean"),
         ({"newMessage": {"role": "user", "parts": [{"text": ""}]}}, "empty"),
@@ -497,3 +508,42 @@ def test_main_uses_host_and_port_environment(monkeypatch) -> None:
             "proxy_headers": True,
         }
     ]
+
+
+async def test_session_service_uri_configures_adk_and_runtime_config(
+    app_factory,
+) -> None:
+    uri = (
+        "agentengine://projects/test-project/locations/us-central1/"
+        "reasoningEngines/12345"
+    )
+    app = app_factory(SESSION_SERVICE_URI=uri)
+    async with _client(app) as client:
+        config = await client.get("/runtime-config.json")
+
+    assert config.status_code == 200
+    assert config.json()["temporarySessions"] is False
+
+
+def test_agentengine_session_service_uri_instantiates_vertex_session_service() -> None:
+    from google.adk.cli.utils.service_factory import (
+        create_session_service_from_options,
+    )
+    from google.adk.sessions.vertex_ai_session_service import (
+        VertexAiSessionService,
+    )
+
+    uri = (
+        "agentengine://projects/test-project/locations/us-central1/"
+        "reasoningEngines/12345"
+    )
+    service = create_session_service_from_options(
+        base_dir=web_app.AGENT_DIR,
+        session_service_uri=uri,
+        use_local_storage=False,
+    )
+
+    assert isinstance(service, VertexAiSessionService)
+    assert service._project == "test-project"
+    assert service._location == "us-central1"
+    assert service._agent_engine_id == "12345"
