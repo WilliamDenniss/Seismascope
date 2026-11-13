@@ -4,6 +4,7 @@ from datetime import UTC
 from datetime import datetime
 from types import SimpleNamespace
 
+from google.adk.agents.llm_agent import LlmAgent
 from google.adk.tools import FunctionTool
 from google.adk.tools.load_memory_tool import LoadMemoryTool
 from google.adk.tools.preload_memory_tool import PreloadMemoryTool
@@ -29,6 +30,8 @@ def _resolved_instruction() -> str:
 
 def test_agent_identifies_as_seismascope() -> None:
     assert root_agent.name == "Seismascope"
+    assert root_agent.model == ""
+    assert root_agent.canonical_model.model == LlmAgent.DEFAULT_MODEL
     assert "You are Seismascope," in _resolved_instruction()
 
 

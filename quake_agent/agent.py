@@ -5,7 +5,6 @@ from __future__ import annotations
 from datetime import UTC
 from datetime import datetime
 import logging
-import os
 from pathlib import Path
 
 from google.adk import Agent
@@ -167,7 +166,6 @@ async def _save_turn_to_memory(callback_context: CallbackContext) -> None:
 
 root_agent = Agent(
     name="Seismascope",
-    model=os.getenv("QUAKE_AGENT_MODEL", "gemini-flash-latest"),
     description=(
         "Downloads official USGS earthquake catalogs and creates reproducible, "
         "versioned world-map visualizations."

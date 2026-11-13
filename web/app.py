@@ -121,6 +121,10 @@ def _memory_service_uri() -> str:
     return os.getenv("MEMORY_SERVICE_URI", "").strip() or "memory://"
 
 
+def _default_llm_model() -> str | None:
+    return os.getenv("DEFAULT_LLM_MODEL", "").strip() or None
+
+
 def _artifact_service_uri() -> str:
     value = os.getenv("ARTIFACT_SERVICE_URI", "").strip()
     if not value:
@@ -349,6 +353,7 @@ def create_app() -> FastAPI:
         session_service_uri=session_service_uri,
         memory_service_uri=memory_service_uri,
         artifact_service_uri=artifact_service_uri,
+        default_llm_model=_default_llm_model(),
         use_local_storage=False,
         allow_origins=_allowed_origins(),
         web=False,

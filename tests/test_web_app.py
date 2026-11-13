@@ -49,6 +49,7 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
             "SESSION_SERVICE_URI",
             "MEMORY_SERVICE_URI",
             "ARTIFACT_SERVICE_URI",
+            "DEFAULT_LLM_MODEL",
         ):
             monkeypatch.delenv(name, raising=False)
         for name, value in environment.items():
@@ -66,6 +67,9 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
             if raw_artifact_uri.startswith("gs://")
             else (raw_artifact_uri or "memory://")
         )
+        expected_default_model = (
+            environment.get("DEFAULT_LLM_MODEL", "").strip() or None
+        )
 
         def fake_adk_app(**options: Any) -> FastAPI:
             assert options["agents_dir"].endswith("/quake_agent")
@@ -74,6 +78,7 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
             assert options["session_service_uri"] == expected_session_uri
             assert options["memory_service_uri"] == expected_memory_uri
             assert options["artifact_service_uri"] == expected_artifact_uri
+            assert options["default_llm_model"] == expected_default_model
             app = FastAPI()
 
             @app.get("/health")
@@ -649,3 +654,11 @@ def test_gcs_artifact_service_uri_instantiates_gcs_artifact_service(
     assert isinstance(service, GcsArtifactService)
     assert service.bucket_name == "test-earthquake-artifacts"
     mock_client.bucket.assert_called_once_with("test-earthquake-artifacts")
+
+
+async def test_default_llm_model_configures_adk(app_factory) -> None:
+    app = app_factory(DEFAULT_LLM_MODEL="gemini-2.5-flash")
+    async with _client(app) as client:
+        config = await client.get("/runtime-config.json")
+
+    assert config.status_code == 200

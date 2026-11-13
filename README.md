@@ -68,8 +68,9 @@ Runtime configuration:
 - `ARTIFACT_SERVICE_URI`: Optional ADK artifact backend URI (for example,
   `gs://YOUR_BUCKET` for Google Cloud Storage so cached USGS catalogs and
   rendered maps persist across restarts and replicas). Defaults to `memory://`.
-- `GOOGLE_API_KEY` and `QUAKE_AGENT_MODEL`: Server-side Gemini credentials and
-  model selection.
+- `GOOGLE_API_KEY` and `DEFAULT_LLM_MODEL`: Server-side model credentials and
+  optional ADK default model override (when unset, ADK uses its built-in default
+  model; `adk web --default_llm_model ...` overrides it locally).
 
 ## Docker and Cloud Run
 
