@@ -47,6 +47,7 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
             "QUAKE_AGENT_RATE_LIMIT",
             "QUAKE_AGENT_RATE_WINDOW_SECONDS",
             "SESSION_SERVICE_URI",
+            "MEMORY_SERVICE_URI",
         ):
             monkeypatch.delenv(name, raising=False)
         for name, value in environment.items():
@@ -55,12 +56,16 @@ def app_factory(monkeypatch) -> Callable[..., FastAPI]:
         expected_session_uri = (
             environment.get("SESSION_SERVICE_URI", "").strip() or "memory://"
         )
+        expected_memory_uri = (
+            environment.get("MEMORY_SERVICE_URI", "").strip() or "memory://"
+        )
 
         def fake_adk_app(**options: Any) -> FastAPI:
             assert options["agents_dir"].endswith("/quake_agent")
             assert options["web"] is False
             assert options["auto_create_session"] is True
             assert options["session_service_uri"] == expected_session_uri
+            assert options["memory_service_uri"] == expected_memory_uri
             assert options["artifact_service_uri"] == "memory://"
             app = FastAPI()
 
@@ -256,6 +261,9 @@ async def test_serves_chat_ui_and_runtime_endpoint(app_factory) -> None:
     assert 'typeof crypto.randomUUID === "function"' in page.text
     assert "crypto.getRandomValues(new Uint8Array(16))" in page.text
     assert "value = createUuid();" in page.text
+    assert "localStorage.getItem(userKey);" in page.text
+    assert "const userId = storedUuid(userStorage(), userKey);" in page.text
+    assert "const sessionId = storedUuid(sessionStorage, sessionKey);" in page.text
     assert "sessionStorage.setItem(sessionKey, createUuid());" in page.text
     assert "rememberFirstPrompt(cleanText);" in page.text
     assert 'window.history.pushState(null, "", url);' in page.text
@@ -544,6 +552,42 @@ def test_agentengine_session_service_uri_instantiates_vertex_session_service() -
     )
 
     assert isinstance(service, VertexAiSessionService)
+    assert service._project == "test-project"
+    assert service._location == "us-central1"
+    assert service._agent_engine_id == "12345"
+
+
+async def test_memory_service_uri_configures_adk(app_factory) -> None:
+    uri = (
+        "agentengine://projects/test-project/locations/us-central1/"
+        "reasoningEngines/12345"
+    )
+    app = app_factory(MEMORY_SERVICE_URI=uri)
+    async with _client(app) as client:
+        config = await client.get("/runtime-config.json")
+
+    assert config.status_code == 200
+    assert config.json()["temporarySessions"] is True
+
+
+def test_agentengine_memory_service_uri_instantiates_vertex_memory_bank() -> None:
+    from google.adk.cli.utils.service_factory import (
+        create_memory_service_from_options,
+    )
+    from google.adk.memory.vertex_ai_memory_bank_service import (
+        VertexAiMemoryBankService,
+    )
+
+    uri = (
+        "agentengine://projects/test-project/locations/us-central1/"
+        "reasoningEngines/12345"
+    )
+    service = create_memory_service_from_options(
+        base_dir=web_app.AGENT_DIR,
+        memory_service_uri=uri,
+    )
+
+    assert isinstance(service, VertexAiMemoryBankService)
     assert service._project == "test-project"
     assert service._location == "us-central1"
     assert service._agent_engine_id == "12345"

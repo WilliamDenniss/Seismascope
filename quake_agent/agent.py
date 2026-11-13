@@ -4,13 +4,17 @@ from __future__ import annotations
 
 from datetime import UTC
 from datetime import datetime
+import logging
 import os
 from pathlib import Path
 
 from google.adk import Agent
+from google.adk.agents.callback_context import CallbackContext
 from google.adk.agents.readonly_context import ReadonlyContext
 from google.adk.skills import load_skill_from_dir
 from google.adk.tools import FunctionTool
+from google.adk.tools.load_memory_tool import LoadMemoryTool
+from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 from google.adk.tools.skill_toolset import SkillToolset
 
 from .tools.data_tools import download_usgs_feed
@@ -24,6 +28,8 @@ from .tools.map_tools import plot_data_points_on_map
 from .tools.map_tools import plot_usgs_feed_on_map
 from .tools.map_tools import plot_usgs_search_on_map
 
+
+logger = logging.getLogger(__name__)
 
 _PACKAGE_DIR = Path(__file__).resolve().parent
 _SKILLS_DIR = _PACKAGE_DIR / "skills"
@@ -47,6 +53,8 @@ _skill_toolset = SkillToolset(
 
 _coordinate_distance_tool = FunctionTool(calculate_coordinate_distance)
 _geocode_place_tool = FunctionTool(geocode_place)
+_preload_memory_tool = PreloadMemoryTool()
+_load_memory_tool = LoadMemoryTool()
 
 _BASE_AGENT_INSTRUCTION = """
 You are Seismascope, a careful seismic-data analyst for a curious general audience.
@@ -96,6 +104,12 @@ events, use the provided `google_maps_url`. Otherwise, use the canonical URL
 Coordinates in tool results remain `[longitude, latitude]`; the Google Maps URL
 uses latitude followed by longitude for both the pinned place and map center.
 Keep the displayed coordinate format and precision unchanged.
+
+Use past-conversation memory (`<PAST_CONVERSATIONS>` and `load_memory`) to
+recall user preferences, recurring regions of interest, and prior analyses
+across sessions. Never treat recalled past observations as current earthquake
+catalog data; fetch or query USGS catalogs for earthquake claims and continue to
+follow all geocoder privacy rules.
 """.strip()
 
 
@@ -128,6 +142,29 @@ def _agent_instruction(_: ReadonlyContext) -> str:
     return _instruction_for_time(_utc_now())
 
 
+async def _save_turn_to_memory(callback_context: CallbackContext) -> None:
+    turn_events = [
+        event
+        for event in callback_context.session.events
+        if event.invocation_id == callback_context.invocation_id
+    ]
+    if not turn_events:
+        return
+    try:
+        await callback_context.add_events_to_memory(events=turn_events)
+    except NotImplementedError:
+        try:
+            await callback_context.add_session_to_memory()
+        except ValueError:
+            return
+        except Exception:
+            logger.warning("Failed to save session to memory.", exc_info=True)
+    except ValueError:
+        return
+    except Exception:
+        logger.warning("Failed to save turn events to memory.", exc_info=True)
+
+
 root_agent = Agent(
     name="Seismascope",
     model=os.getenv("QUAKE_AGENT_MODEL", "gemini-flash-latest"),
@@ -136,5 +173,12 @@ root_agent = Agent(
         "versioned world-map visualizations."
     ),
     instruction=_agent_instruction,
-    tools=[_skill_toolset, _coordinate_distance_tool, _geocode_place_tool],
+    tools=[
+        _skill_toolset,
+        _coordinate_distance_tool,
+        _geocode_place_tool,
+        _preload_memory_tool,
+        _load_memory_tool,
+    ],
+    after_agent_callback=_save_turn_to_memory,
 )

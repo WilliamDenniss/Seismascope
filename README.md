@@ -59,6 +59,11 @@ Runtime configuration:
 - `SESSION_SERVICE_URI`: Optional ADK session backend URI (for example,
   `agentengine://projects/PROJECT/locations/REGION/reasoningEngines/ENGINE_ID`).
   Defaults to `memory://`.
+- `MEMORY_SERVICE_URI`: Optional ADK memory backend URI (for example, the same
+  `agentengine://...` resource URI for Memory Bank). Defaults to `memory://`.
+  The browser keeps a persistent `userId` UUID in `localStorage` (falling back
+  to `sessionStorage` if blocked) so memories carry across conversations and
+  visits, while `sessionId` remains per-tab in `sessionStorage`.
 - `GOOGLE_API_KEY` and `QUAKE_AGENT_MODEL`: Server-side Gemini credentials and
   model selection.
 

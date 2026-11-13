@@ -517,11 +517,22 @@
             + `-${hex.slice(10).join("")}`;
         }
 
-        function storedUuid(key) {
-          let value = sessionStorage.getItem(key);
-          if (!value) {
+        const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+
+        function userStorage() {
+          try {
+            localStorage.getItem(userKey);
+            return localStorage;
+          } catch (_) {
+            return sessionStorage;
+          }
+        }
+
+        function storedUuid(storage, key) {
+          let value = storage.getItem(key);
+          if (!value || !uuidPattern.test(value)) {
             value = createUuid();
-            sessionStorage.setItem(key, value);
+            storage.setItem(key, value);
           }
           return value;
         }
@@ -1359,8 +1370,8 @@
           }
 
           rememberFirstPrompt(cleanText);
-          const userId = storedUuid(userKey);
-          const sessionId = storedUuid(sessionKey);
+          const userId = storedUuid(userStorage(), userKey);
+          const sessionId = storedUuid(sessionStorage, sessionKey);
           addMessage("user", cleanText);
           prompt.value = "";
           prompt.style.height = "auto";

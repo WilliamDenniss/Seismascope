@@ -5,12 +5,17 @@ from datetime import datetime
 from types import SimpleNamespace
 
 from google.adk.tools import FunctionTool
+from google.adk.tools.load_memory_tool import LoadMemoryTool
+from google.adk.tools.preload_memory_tool import PreloadMemoryTool
 import pytest
 
 import quake_agent.agent as agent_module
 from quake_agent.agent import _coordinate_distance_tool
 from quake_agent.agent import _geocode_place_tool
 from quake_agent.agent import _instruction_for_time
+from quake_agent.agent import _load_memory_tool
+from quake_agent.agent import _preload_memory_tool
+from quake_agent.agent import _save_turn_to_memory
 from quake_agent.agent import _skill_toolset
 from quake_agent.agent import root_agent
 
@@ -159,3 +164,54 @@ def test_agent_requires_deliberate_catalog_color_mode():
     assert "Choose bands or a continuous gradient" in instruction
     assert "Neither is a universal default" in instruction
     assert "reuse the saved color style" in instruction
+
+
+def test_agent_wires_memory_tools_and_callback() -> None:
+    instruction = _resolved_instruction()
+    assert isinstance(_preload_memory_tool, PreloadMemoryTool)
+    assert isinstance(_load_memory_tool, LoadMemoryTool)
+    assert _load_memory_tool._get_declaration() is not None
+    assert _preload_memory_tool in root_agent.tools
+    assert _load_memory_tool in root_agent.tools
+    assert root_agent.after_agent_callback is _save_turn_to_memory
+    assert "`<PAST_CONVERSATIONS>`" in instruction
+    assert "`load_memory`" in instruction
+    assert "Never treat recalled past observations as current earthquake" in instruction
+
+
+async def test_save_turn_to_memory_ingests_only_current_invocation_events() -> None:
+    prior = SimpleNamespace(invocation_id="inv-1", id="e1")
+    current_user = SimpleNamespace(invocation_id="inv-2", id="e2")
+    current_model = SimpleNamespace(invocation_id="inv-2", id="e3")
+    recorded: list[list[object]] = []
+
+    async def add_events_to_memory(*, events):
+        recorded.append(list(events))
+
+    context = SimpleNamespace(
+        invocation_id="inv-2",
+        session=SimpleNamespace(events=[prior, current_user, current_model]),
+        add_events_to_memory=add_events_to_memory,
+    )
+
+    await _save_turn_to_memory(context)
+
+    assert recorded == [[current_user, current_model]]
+
+
+async def test_save_turn_to_memory_ignores_missing_or_failing_memory_service() -> None:
+    event = SimpleNamespace(invocation_id="inv-1", id="e1")
+
+    async def missing_memory(*, events):
+        raise ValueError("memory service is not available")
+
+    async def failing_memory(*, events):
+        raise RuntimeError("transient backend failure")
+
+    for handler in (missing_memory, failing_memory):
+        context = SimpleNamespace(
+            invocation_id="inv-1",
+            session=SimpleNamespace(events=[event]),
+            add_events_to_memory=handler,
+        )
+        await _save_turn_to_memory(context)

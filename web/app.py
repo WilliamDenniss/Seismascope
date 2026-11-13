@@ -117,6 +117,10 @@ def _session_service_uri() -> str:
     return os.getenv("SESSION_SERVICE_URI", "").strip() or "memory://"
 
 
+def _memory_service_uri() -> str:
+    return os.getenv("MEMORY_SERVICE_URI", "").strip() or "memory://"
+
+
 def _is_uuid(value: Any) -> bool:
     if not isinstance(value, str):
         return False
@@ -313,11 +317,13 @@ def create_app() -> FastAPI:
     limiter = WindowRateLimiter(rate_limit, rate_window)
     active_sessions = ActiveSessions()
     session_service_uri = _session_service_uri()
+    memory_service_uri = _memory_service_uri()
     temporary_sessions = session_service_uri == "memory://"
 
     app = get_fast_api_app(
         agents_dir=str(AGENT_DIR),
         session_service_uri=session_service_uri,
+        memory_service_uri=memory_service_uri,
         artifact_service_uri="memory://",
         use_local_storage=False,
         allow_origins=_allowed_origins(),
